@@ -1,0 +1,21 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<addons-presets>
+  <last-update>2026-04-30T14:47:45.2108801+02:00</last-update>
+  <published-ids>
+    <id>steam:843577117</id>
+    <id>steam:843425103</id>
+    <id>steam:843632231</id>
+    <id>steam:843593391</id>
+    <id>steam:583496184</id>
+    <id>steam:583544987</id>
+    <id>local:Z:\HOME\SAMUEL\GAMES\ARMA3\WOGMODS\@YUEMOD\</id>
+    <id>local:Z:\HOME\SAMUEL\GAMES\ARMA3\WOGMODS\@WOG_MODS\</id>
+    <id>local:Z:\HOME\SAMUEL\GAMES\ARMA3\WOGMODS\@WOG_ISLANDS\</id>
+    <id>local:Z:\HOME\SAMUEL\GAMES\ARMA3\WOGMODS\@WOG_EXTRA\</id>
+    <id>local:Z:\HOME\SAMUEL\GAMES\ARMA3\WOGMODS\@WOG_BW\</id>
+    <id>local:Z:\HOME\SAMUEL\GAMES\ARMA3\WOGMODS\@WOG_BAF\</id>
+    <id>local:Z:\HOME\SAMUEL\GAMES\ARMA3\WOGMODS\@WOG_ACE\</id>
+    <id>local:Z:\HOME\SAMUEL\GAMES\ARMA3\WOGMODS\@TFAR\</id>
+  </published-ids>
+  <dlcs-appids />
+</addons-presets>

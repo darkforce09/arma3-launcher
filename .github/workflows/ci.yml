@@ -1,0 +1,19 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      # The toolchain version comes from rust-toolchain.toml.
+      - run: rustup show active-toolchain || rustup toolchain install
+      - name: System libraries for eframe and rfd
+        run: sudo apt-get update && sudo apt-get install -y libxkbcommon-dev libwayland-dev libgl-dev
+      - run: cargo fmt --check
+      - run: cargo clippy --all-targets --locked -- -D warnings
+      - run: cargo test --locked
+      - run: cargo build --release --locked

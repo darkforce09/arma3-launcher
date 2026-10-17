@@ -1,0 +1,6 @@
+/target/
+/.workstation/
+/.claude/
+/.codex/
+/.worktrees/*
+!/.worktrees/README.md
