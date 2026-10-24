@@ -3,16 +3,19 @@
 A native launcher for Arma 3 that looks and works like the vanilla launcher. Rust + egui. On Linux it replaces the vanilla launcher under Proton. On Windows it is a native program next to the Windows game. It starts in about a tenth of a second and uses the desktop's own file dialogs.
 
 ## Install
+Download `arma3-launcher-<version>-linux-x86_64.tar.gz` from [Releases](https://github.com/darkforce09/arma3-launcher/releases) and extract it into the Arma 3 folder:
 ```bash
-cargo build --release
+tar -xzf arma3-launcher-*-linux-x86_64.tar.gz -C ~/.local/share/Steam/steamapps/common/"Arma 3"
 ```
-In Steam: Arma 3 → Properties → Launch Options. Put the launcher in front of `%command%`.
+That gives `Arma 3/arma3-launcher/` with the launcher and `libsteam_api.so`, which must stay next to it. Needs glibc 2.39 or newer.
 
-Linux, after any variables you already have:
+In Steam: Arma 3 → Properties → Launch Options. Put the launcher in front of `%command%`, after any variables you already have, with the full path in quotes (replace `<you>` with your user name):
 ```
-/path/to/arma3-launcher/target/release/arma3-launcher %command%
+"/home/<you>/.local/share/Steam/steamapps/common/Arma 3/arma3-launcher/arma3-launcher" %command%
 ```
-`libsteam_api.so` must stay next to the binary. Press Play in Steam and the launcher opens. Its PLAY button starts the game through the Proton setup Steam would use.
+Press Play in Steam and the launcher opens. Its PLAY button starts the game through the Proton setup Steam would use. Launch options written after `%command%` are passed to the game.
+
+Steam's "Verify integrity" leaves the folder alone; uninstalling Arma 3 deletes it.
 
 Windows:
 ```
@@ -20,7 +23,11 @@ Windows:
 ```
 The exe can live in its own folder or replace `arma3launcher.exe` in the Arma 3 folder. It does not use the `steam_api64.dll` that ships with the game; that file is an older Steamworks, and loading it makes Windows report a missing `SteamAPI_SteamFriends_v018` entry point. The process Steam launched stays running until the game exits, so playtime and Steam's Stop button keep working. An unsigned build will show a SmartScreen warning.
 
-Launch options written after `%command%` are passed to the game.
+### Build from source
+```bash
+cargo build --release
+```
+The launcher is then `target/release/arma3-launcher`, with `libsteam_api.so` next to it. On Windows the Steam DLL is embedded in the exe and written to `%LOCALAPPDATA%\arma3-launcher\a3l_steam_api.dll` on first Steam use; do not copy `steam_api64.dll` next to the exe.
 
 ## What it does
 - **Dashboard:** latest report, Arma 3 Units, social links, DLC banner.
@@ -42,3 +49,29 @@ After a game that stays attached to the launcher, a report in the Arma 3 folder 
 - On Linux, Arma 3 must be the Windows build run through Proton.
 - Images and fonts are read from your Arma 3 install at runtime; none ship with this launcher.
 - English only.
+
+⚠ 1 unresolved conflict detected
+- ours = HEAD
+- theirs = origin/main
+NOTICE: Inspect a block by reading `conflict://<N>` (add `/ours` / `/theirs` / `/base` to render a single side). Resolve with `write({ path: "conflict://<N>", content })`, or bulk-resolve every registered conflict with `write({ path: "conflict://*", content })`. Writes replace ONLY the marker block (markers + all sides) — never repeat the lines before/after it; they stay in place.
+`content` shorthand: a line that is exactly `@ours` / `@theirs` / `@base` / `@both` expands to that recorded section. `@both` is ours-then-theirs with no separator — only for additive conflicts where each side adds something different; NEVER for competing edits of the same lines (pick a side or write the combined text). Lines that are not a token pass through verbatim, so `"// keep both\n@ours\n@theirs"` literally writes the comment, then ours, then theirs.
+Per-id bulk: `write({ path: "conflict://*", content: "1: @ours\n2: @theirs\n…" })` resolves each listed id with that side in ONE call — the cheapest way through many pick-one conflicts; unlisted ids stay registered.
+Resolve each block faithfully: keep one side (`@ours`/`@theirs`), or combine them when both intents apply — never invent content beyond the recorded sides, and never stack both sides of competing edits. Resolve several conflicts in a single turn by issuing multiple `write` calls at once; ids stay valid as earlier blocks are resolved.
+
+──── #1  L10-42 ────
+<<< ours
+In Steam: Arma 3 → Properties → Launch Options. Put the launcher in front of `%command%`.
+
+Linux, after any variables you already have:
+```
+/path/to/arma3-launcher/target/release/arma3-launcher %command%
+```
+… (9 more lines)
+>>> theirs
+That gives `Arma 3/arma3-launcher/` with the launcher and `libsteam_api.so`, which must stay next to it. Needs glibc 2.39 or newer.
+
+In Steam: Arma 3 → Properties → Launch Options. Put the launcher in front of `%command%`, after any variables you already have, with the full path in quotes (replace `<you>` with your user name):
+```
+"/home/<you>/.local/share/Steam/steamapps/common/Arma 3/arma3-launcher/arma3-launcher" %command%
+```
+… (9 more lines)
