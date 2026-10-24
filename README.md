@@ -3,16 +3,25 @@
 A native Linux launcher for Arma 3 that looks and works like the vanilla launcher, without running the vanilla launcher under Proton. Rust + egui. It starts in about a tenth of a second and uses the desktop's own file dialogs (through the XDG portal).
 
 ## Install
+Download `arma3-launcher-<version>-linux-x86_64.tar.gz` from [Releases](https://github.com/darkforce09/arma3-launcher/releases) and extract it into the Arma 3 folder:
 ```bash
-cargo build --release
+tar -xzf arma3-launcher-*-linux-x86_64.tar.gz -C ~/.local/share/Steam/steamapps/common/"Arma 3"
 ```
-In Steam: Arma 3 → Properties → Launch Options. Put the launcher in front of `%command%`, after any variables you already have:
+That gives `Arma 3/arma3-launcher/` with the launcher and `libsteam_api.so`, which must stay next to it. Needs glibc 2.39 or newer.
+
+In Steam: Arma 3 → Properties → Launch Options. Put the launcher in front of `%command%`, after any variables you already have, with the full path in quotes (replace `<you>` with your user name):
 ```
-/path/to/arma_3_launcher/target/release/arma3-launcher %command%
+"/home/<you>/.local/share/Steam/steamapps/common/Arma 3/arma3-launcher/arma3-launcher" %command%
 ```
 Press Play in Steam and the launcher opens. Its PLAY button starts the game through the Proton setup Steam would use. Launch options written after `%command%` are passed to the game.
 
-`libsteam_api.so` must stay next to the binary.
+Steam's "Verify integrity" leaves the folder alone; uninstalling Arma 3 deletes it.
+
+### Build from source
+```bash
+cargo build --release
+```
+The launcher is then `target/release/arma3-launcher`, with `libsteam_api.so` next to it.
 
 ## What it does
 - **Dashboard:** latest report, Arma 3 Units, social links, DLC banner.

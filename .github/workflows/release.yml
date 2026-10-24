@@ -1,0 +1,29 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      # The toolchain version comes from rust-toolchain.toml.
+      - run: rustup show active-toolchain || rustup toolchain install
+      - name: System libraries for eframe and rfd
+        run: sudo apt-get update && sudo apt-get install -y libxkbcommon-dev libwayland-dev libgl-dev
+      - run: cargo build --release --locked
+      - name: Package
+        run: |
+          set -euo pipefail
+          mkdir -p dist/arma3-launcher
+          cp target/release/arma3-launcher target/release/libsteam_api.so dist/arma3-launcher/
+          tar -C dist -czf "arma3-launcher-${GITHUB_REF_NAME}-linux-x86_64.tar.gz" arma3-launcher
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" "arma3-launcher-${GITHUB_REF_NAME}-linux-x86_64.tar.gz" --generate-notes
