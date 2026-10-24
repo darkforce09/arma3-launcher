@@ -23,7 +23,16 @@ jobs:
           mkdir -p dist/arma3-launcher
           cp target/release/arma3-launcher target/release/libsteam_api.so dist/arma3-launcher/
           tar -C dist -czf "arma3-launcher-${GITHUB_REF_NAME}-linux-x86_64.tar.gz" arma3-launcher
+          sha256sum "arma3-launcher-${GITHUB_REF_NAME}-linux-x86_64.tar.gz" > SHA256SUMS.txt
+      # The annotated tag carries the release: its subject is the title, its body the notes.
       - name: Publish
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" "arma3-launcher-${GITHUB_REF_NAME}-linux-x86_64.tar.gz" --generate-notes
+        run: |
+          set -euo pipefail
+          git fetch --force origin "refs/tags/${GITHUB_REF_NAME}:refs/tags/${GITHUB_REF_NAME}"
+          subject=$(git tag -l --format='%(contents:subject)' "$GITHUB_REF_NAME")
+          git tag -l --format='%(contents:body)' "$GITHUB_REF_NAME" > notes.md
+          gh release create "$GITHUB_REF_NAME" \
+            "arma3-launcher-${GITHUB_REF_NAME}-linux-x86_64.tar.gz" SHA256SUMS.txt \
+            --title "${GITHUB_REF_NAME} — ${subject}" --notes-file notes.md

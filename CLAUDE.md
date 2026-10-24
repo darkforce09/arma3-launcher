@@ -26,3 +26,4 @@ Native Linux replacement for the vanilla Arma 3 launcher: Rust + egui, same look
 - Build: `cargo build --release`
 - Test: `cargo test`
 - Lint: `cargo clippy --all-targets -- -D warnings` and `cargo fmt --check`
+- Release: bump `version` in `Cargo.toml` and commit, then `git tag -a vX.Y.Z --cleanup=verbatim -F notes.md` and `git push origin vX.Y.Z`. In `notes.md`, line 1 is the title after `vX.Y.Z — `, then a blank line, then the Markdown notes. `.github/workflows/release.yml` builds the tarball and publishes it with `SHA256SUMS.txt`.
