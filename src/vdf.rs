@@ -72,6 +72,32 @@ fn tokenize(text: &str) -> Vec<Token> {
     tokens
 }
 
+/// The `path` of the library folder whose `apps` block contains `app_id`
+/// (`libraryfolders.vdf`). The path is the library root, which holds `steamapps`.
+pub fn library_for_app(text: &str, app_id: &str) -> Option<String> {
+    let tokens = tokenize(text);
+    let mut path = None;
+    let mut i = 0;
+    while i < tokens.len() {
+        if let Token::Str(key) = &tokens[i]
+            && key.eq_ignore_ascii_case("path")
+            && let Some(Token::Str(value)) = tokens.get(i + 1)
+        {
+            path = Some(value.clone());
+            i += 2;
+            continue;
+        }
+        if let Token::Str(key) = &tokens[i]
+            && key == app_id
+            && path.is_some()
+        {
+            return path;
+        }
+        i += 1;
+    }
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -105,5 +131,33 @@ mod tests {
             Some("107410")
         );
         assert_eq!(lookup(MANIFEST, &["AppState", "Missing", "BetaKey"]), None);
+    }
+
+    #[test]
+    fn finds_the_library_that_holds_the_app() {
+        let text = r#""libraryfolders"
+{
+	"0"
+	{
+		"path"		"C:\\Steam"
+		"apps"
+		{
+			"228980"		"123"
+		}
+	}
+	"1"
+	{
+		"path"		"D:\\Games\\Steam"
+		"apps"
+		{
+			"107410"		"456"
+		}
+	}
+}"#;
+        assert_eq!(
+            library_for_app(text, "107410").as_deref(),
+            Some(r"D:\Games\Steam")
+        );
+        assert_eq!(library_for_app(text, "999"), None);
     }
 }

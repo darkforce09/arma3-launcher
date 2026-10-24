@@ -204,7 +204,7 @@ pub fn installed_from_manifest(steamapps: &Path) -> Vec<u32> {
 }
 
 /// The `-mod` entries for the loaded optional DLC that are installed, in load order: the DLC
-/// folders as Wine paths.
+/// folders as the game sees them.
 pub fn launch_paths(
     loaded: &[u32],
     game_dir: &Path,
@@ -215,7 +215,7 @@ pub fn launch_paths(
         .filter_map(|id| find(*id))
         .filter(|d| !d.mandatory && installed(d.app_id))
         .filter_map(|d| crate::fs_case::resolve(game_dir, d.folder))
-        .map(|path| crate::vanilla::wine_path(&path))
+        .map(|path| crate::vanilla::game_path(&path))
         .collect()
 }
 
@@ -231,12 +231,14 @@ mod tests {
         std::fs::create_dir_all(game.join("Contact")).unwrap();
         std::fs::create_dir_all(game.join("Expansion")).unwrap();
         let paths = launch_paths(&[1021790, 395180, 1042220, 2647830], &game, |_| true);
-        assert_eq!(
-            paths,
-            [
-                crate::vanilla::wine_path(&game.join("Contact")),
-                crate::vanilla::wine_path(&game.join("GM"))
-            ]
-        );
+        let expected = [
+            crate::vanilla::game_path(&game.join("Contact")),
+            crate::vanilla::game_path(&game.join("GM")),
+        ];
+        // Windows `exists` is case-insensitive, so the resolved folder may keep the requested case.
+        assert_eq!(paths.len(), expected.len());
+        for (path, expected) in paths.iter().zip(expected) {
+            assert!(path.eq_ignore_ascii_case(&expected), "{path} != {expected}");
+        }
     }
 }

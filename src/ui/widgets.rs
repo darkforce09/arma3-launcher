@@ -216,11 +216,11 @@ pub fn play_contact_button(ui: &mut egui::Ui, win: Rect) -> bool {
 
 fn accent_state(response: &egui::Response) -> Color32 {
     if response.is_pointer_button_down_on() {
-        theme::ACCENT_PRESSED
+        theme::accent_pressed()
     } else if response.hovered() {
-        theme::ACCENT_HOVER
+        theme::accent_hover()
     } else {
-        theme::ACCENT
+        theme::accent()
     }
 }
 
@@ -316,11 +316,11 @@ pub fn section_header(
     let galley = ui.painter().layout_no_wrap(
         title.into(),
         theme::heading(theme::HEADER_SIZE),
-        theme::ACCENT,
+        theme::accent(),
     );
     let text_pos = pos2(rect.left() + 20.0, rect.center().y - galley.size().y / 2.0);
     let text_right = text_pos.x + galley.size().x;
-    ui.painter().galley(text_pos, galley, theme::ACCENT);
+    ui.painter().galley(text_pos, galley, theme::accent());
     if let Some(count) = count {
         count_badge(ui, pos2(text_right + 10.0, rect.center().y), count);
     }
@@ -340,7 +340,7 @@ pub fn count_badge(ui: &egui::Ui, left_center: egui::Pos2, count: usize) {
         .layout_no_wrap(count.to_string(), theme::heading(12.0), theme::BLACK);
     let size = vec2((galley.size().x + 6.0).max(20.0), 20.0);
     let rect = Rect::from_min_size(pos2(left_center.x, left_center.y - 10.0), size);
-    ui.painter().rect_filled(rect, 3.0, theme::ACCENT);
+    ui.painter().rect_filled(rect, 3.0, theme::accent());
     ui.painter()
         .galley(rect.center() - galley.size() / 2.0, galley, theme::BLACK);
 }
@@ -454,7 +454,7 @@ pub fn filter_box(
 ) -> bool {
     let active = !text.is_empty();
     let border = if active {
-        theme::ACCENT
+        theme::accent()
     } else {
         theme::argb(0xFF333333)
     };
@@ -485,7 +485,7 @@ pub fn filter_box(
             vec2(clear_width, rect.height()),
         );
         let response = ui.interact(clear, id.with("clear"), Sense::click());
-        gfx.paint_icon(ui, icons::CROSS, clear, vec2(12.0, 12.0), theme::ACCENT);
+        gfx.paint_icon(ui, icons::CROSS, clear, vec2(12.0, 12.0), theme::accent());
         if response.clicked() {
             text.clear();
             return true;
@@ -579,7 +579,7 @@ pub fn text_box(ui: &mut egui::Ui, id: Id, rect: Rect, text: &mut String) -> boo
     ui.painter().rect_filled(rect, 0.0, theme::BLACK);
     let focused = ui.memory(|m| m.has_focus(id));
     let border = if focused {
-        theme::ACCENT
+        theme::accent()
     } else {
         theme::FLAT_BORDER
     };
@@ -631,7 +631,7 @@ pub fn number_box(
             button,
             0.0,
             if response.hovered() {
-                theme::ACCENT
+                theme::accent()
             } else {
                 theme::BLACK
             },
@@ -686,7 +686,7 @@ pub fn combo(
     let open = egui::Popup::is_id_open(ui.ctx(), egui::Popup::default_response_id(&response));
     let hot = response.hovered() || open;
     ui.painter()
-        .rect_filled(rect, 0.0, if hot { theme::ACCENT } else { theme::BLACK });
+        .rect_filled(rect, 0.0, if hot { theme::accent() } else { theme::BLACK });
     ui.painter().rect_stroke(
         rect,
         0.0,
@@ -767,7 +767,7 @@ pub fn browse_button(ui: &mut egui::Ui, id: Id, rect: Rect) -> bool {
         rect,
         0.0,
         if response.hovered() {
-            theme::ACCENT
+            theme::accent()
         } else {
             theme::BLACK
         },
@@ -827,7 +827,7 @@ pub fn command_button(
         ui.painter().rect_filled(rect, 0.0, theme::argb(0xFF808080));
         ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
     } else if default {
-        ui.painter().rect_filled(rect, 0.0, theme::ACCENT);
+        ui.painter().rect_filled(rect, 0.0, theme::accent());
     } else {
         let mut mesh = egui::Mesh::default();
         let (top, bottom) = (theme::argb(0xFF111111), theme::argb(0xFF050505));

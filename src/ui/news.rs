@@ -271,7 +271,7 @@ fn item_header(
         let tint = if unread && !expanded {
             theme::WHITE
         } else {
-            theme::ACCENT
+            theme::accent()
         };
         ui.painter()
             .image(texture.id(), snap(ui, icon), FULL_UV, tint);
@@ -296,7 +296,7 @@ fn item_header(
         (theme::WHITE, theme::WHITE, theme::argb(0xAAFFFFFF))
     } else {
         (
-            theme::ACCENT,
+            theme::accent(),
             theme::NEWS_EXCERPT,
             theme::NEWS_META.gamma_multiply(0.7),
         )

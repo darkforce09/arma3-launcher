@@ -10,8 +10,8 @@ use super::gfx::Gfx;
 use super::widgets::{combo, flat_button, flat_button_width, section_header, tab_control};
 use super::{icons, theme};
 use crate::params::Settings;
+use crate::vanilla::game_path;
 use crate::vanilla::local_mods::LocalMods;
-use crate::vanilla::wine_path;
 
 /// `LauncherShutdownMode` values and labels.
 const SHUTDOWN_MODES: [(&str, &str); 4] = [
@@ -198,7 +198,7 @@ impl OptionsPage {
 }
 
 fn add_watched(local: &mut LocalMods, launcher_data: &Path, folder: &Path) {
-    let windows = wine_path(folder);
+    let windows = game_path(folder);
     if !local
         .autodetection_directories
         .iter()

@@ -374,7 +374,7 @@ fn latest_reports(
     if let Some(texture) = gfx.bitmap(ui.ctx(), post.icon()) {
         // The PNG is an opacity mask over the accent colour: tinting its alpha does the same.
         ui.painter()
-            .image(texture.id(), snap(ui, icon), FULL_UV, theme::ACCENT);
+            .image(texture.id(), snap(ui, icon), FULL_UV, theme::accent());
     }
 
     let read =
@@ -396,11 +396,11 @@ fn latest_reports(
     let title = ui.painter().layout_no_wrap(
         post.title.clone(),
         theme::heading(theme::HEADER_SIZE),
-        theme::ACCENT,
+        theme::accent(),
     );
     let title_height = title.size().y;
     ui.painter()
-        .galley(pos2(text_left, y), title, theme::ACCENT);
+        .galley(pos2(text_left, y), title, theme::accent());
     y += title_height + 2.0;
     let excerpt = single_line(ui, &post.excerpt_text(), text_width, theme::NEWS_EXCERPT);
     let excerpt_height = excerpt.size().y;

@@ -37,10 +37,16 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(
-            resolve(&dir, "launcher/en-US/sharedresources.RESOURCES.dll"),
-            Some(dir.join("Launcher/En-us/SharedResources.resources.dll"))
-        );
+        let found = resolve(&dir, "launcher/en-US/sharedresources.RESOURCES.dll").unwrap();
+        let expected = dir.join("Launcher/En-us/SharedResources.resources.dll");
+        // Windows reports every case as existing, so the returned path may keep the requested
+        // case, and joining one component at a time uses the platform separator.
+        let folded = |path: &Path| {
+            path.to_string_lossy()
+                .replace(['/', '\\'], "/")
+                .to_ascii_lowercase()
+        };
+        assert_eq!(folded(&found), folded(&expected), "{}", found.display());
         assert_eq!(resolve(&dir, "Launcher/missing.dll"), None);
         std::fs::remove_dir_all(dir).unwrap();
     }

@@ -10,6 +10,27 @@ use std::time::Duration;
 use steamworks::{Client, ItemState, PublishedFileId};
 
 pub const ARMA3_APP_ID: u32 = 107410;
+
+/// A workshop file id from a bare number or a Steam URL (`?id=` / `&id=`).
+pub fn published_file_id(text: &str) -> Option<u64> {
+    let text = text.trim();
+    if let Ok(id) = text.parse::<u64>() {
+        return (id > 0).then_some(id);
+    }
+    let lower = text.to_ascii_lowercase();
+    for key in ["?id=", "&id="] {
+        let Some(rest) = lower.split(key).nth(1) else {
+            continue;
+        };
+        let digits: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
+        if let Ok(id) = digits.parse::<u64>()
+            && id > 0
+        {
+            return Some(id);
+        }
+    }
+    None
+}
 /// `kNumUGCResultsPerPage`: the most items one details query returns.
 const DETAILS_BATCH: usize = 50;
 
@@ -551,5 +572,23 @@ unsafe impl steamworks::Callback for WorkshopInstalled {
             app: c.m_unAppID,
             id: c.m_nPublishedFileId,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn reads_a_workshop_file_id_from_a_url_or_a_number() {
+        assert_eq!(published_file_id("450814997"), Some(450814997));
+        assert_eq!(
+            published_file_id(
+                "https://steamcommunity.com/sharedfiles/filedetails/?id=450814997&searchtext="
+            ),
+            Some(450814997)
+        );
+        assert_eq!(published_file_id("https://example.com"), None);
+        assert_eq!(published_file_id("0"), None);
     }
 }

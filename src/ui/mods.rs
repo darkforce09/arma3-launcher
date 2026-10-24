@@ -18,7 +18,7 @@ use super::{icons, theme};
 use crate::config::LauncherConfig;
 use crate::library::Library;
 use crate::mods::{self, Mod, Source, Status};
-use crate::steam::{ItemDetails, Steam};
+use crate::steam::{self, ItemDetails, Steam};
 use crate::vanilla::local_mods::LocalMods;
 use crate::vanilla::preset_html::{self, ExportMod};
 use crate::vanilla::{self, preset};
@@ -63,6 +63,36 @@ enum Line {
     Row { index: usize, section: Section },
 }
 
+struct CollectionDialog {
+    url: String,
+    save_preset: bool,
+    /// Set once Steam has been asked for this published file.
+    pending_id: Option<u64>,
+    focused: bool,
+}
+
+/// A workshop collection whose details have arrived.
+pub struct FoundCollection {
+    pub title: String,
+    pub children: Vec<u64>,
+    pub save_preset: bool,
+}
+
+/// A preset name vanilla will accept, taken from the collection title.
+pub fn collection_preset_name(title: &str) -> String {
+    let name: String = title
+        .chars()
+        .filter(|c| c.is_alphanumeric() || *c == ' ' || *c == '_')
+        .collect();
+    let name: String = name.trim().chars().take(30).collect();
+    let name = name.trim().to_owned();
+    if preset::is_valid_name(&name) {
+        name
+    } else {
+        "Collection".into()
+    }
+}
+
 pub struct ModsPage {
     filter: String,
     expanded: HashSet<String>,
@@ -72,6 +102,9 @@ pub struct ModsPage {
     renaming: Option<(String, String)>,
     pending_import: Option<PendingImport>,
     dependency_dialog: Option<DependencyDialog>,
+    collection: Option<CollectionDialog>,
+    /// Mods to load once Steam has described a collection.
+    queued_load: Option<Vec<String>>,
     sizes: HashMap<PathBuf, Option<u64>>,
     sizes_tx: Sender<(PathBuf, u64)>,
     sizes_rx: Receiver<(PathBuf, u64)>,
@@ -92,6 +125,8 @@ impl ModsPage {
             renaming: None,
             pending_import: None,
             dependency_dialog: None,
+            collection: None,
+            queued_load: None,
             sizes: HashMap::new(),
             sizes_tx,
             sizes_rx,
@@ -113,6 +148,9 @@ impl ModsPage {
         env: &mut ModsEnv,
     ) {
         self.handle_dialogs(lib, env);
+        if let Some(ids) = self.queued_load.take() {
+            self.request_load(ids, None, lib, env);
+        }
         while let Ok((path, size)) = self.sizes_rx.try_recv() {
             self.sizes.insert(path, Some(size));
         }
@@ -134,6 +172,7 @@ impl ModsPage {
         }
         self.import_prompts(ui, lib, env);
         self.dependency_prompts(ui, gfx, lib, env);
+        self.collection_prompt(ui, gfx, env);
     }
 
     /// The PRESET toggle and its popup, for other pages that show them (DLC). Call after the
@@ -205,7 +244,7 @@ impl ModsPage {
                 Align2::LEFT_CENTER,
                 "*",
                 font,
-                theme::ACCENT,
+                theme::accent(),
             );
         }
         chevron(
@@ -288,6 +327,14 @@ impl ModsPage {
                 menu::separator(ui);
                 if menu::item(ui, "Add watched folder...", true) {
                     self.pick_folder(DialogResult::WatchedFolder);
+                }
+                if menu::item(ui, "Subscribe to collection...", true) {
+                    self.collection = Some(CollectionDialog {
+                        url: String::new(),
+                        save_preset: true,
+                        pending_id: None,
+                        focused: false,
+                    });
                 }
             });
 
@@ -637,7 +684,7 @@ impl ModsPage {
             x += 20.0 + 8.0;
         }
         let tags = [
-            (m.updated, "updated", theme::ACCENT),
+            (m.updated, "updated", theme::accent()),
             (m.auto_included, "auto-included", theme::AUTO_INCLUDED),
         ];
         for (show, tag, color) in tags {
@@ -1014,7 +1061,7 @@ impl ModsPage {
         while let Ok(result) = self.dialogs_rx.try_recv() {
             match result {
                 DialogResult::LocalMod(folder) => {
-                    let windows = vanilla::wine_path(&folder);
+                    let windows = vanilla::game_path(&folder);
                     if !env
                         .local
                         .user_directories
@@ -1037,7 +1084,7 @@ impl ModsPage {
                     }
                 }
                 DialogResult::WatchedFolder(folder) => {
-                    let windows = vanilla::wine_path(&folder);
+                    let windows = vanilla::game_path(&folder);
                     if !env
                         .local
                         .autodetection_directories
@@ -1219,6 +1266,157 @@ impl ModsPage {
                 ),
             ));
         }
+    }
+
+    /// Paste a workshop collection URL (`Subscribe to collection...`).
+    fn collection_prompt(&mut self, ui: &mut egui::Ui, gfx: &mut Gfx, env: &mut ModsEnv) {
+        let Some(dialog) = &mut self.collection else {
+            return;
+        };
+        let win = ui.max_rect();
+        ui.interact(
+            win,
+            Id::unique("collection-overlay"),
+            Sense::click_and_drag(),
+        );
+        ui.painter().rect_filled(win, 0.0, theme::STRONG_PANEL);
+        let rect = Rect::from_center_size(win.center(), vec2(460.0, 210.0));
+        ui.painter().rect_filled(rect, 0.0, theme::argb(0xFF111111));
+        ui.painter().rect_stroke(
+            rect,
+            0.0,
+            (1.0, theme::argb(0xFF222222)),
+            egui::StrokeKind::Inside,
+        );
+        ui.painter().text(
+            pos2(rect.left() + 16.0, rect.top() + 22.0),
+            Align2::LEFT_CENTER,
+            "Workshop collection",
+            theme::body(theme::HEADER_SIZE),
+            theme::WHITE,
+        );
+        ui.painter().text(
+            pos2(rect.left() + 16.0, rect.top() + 52.0),
+            Align2::LEFT_CENTER,
+            "Paste a Steam workshop collection link.",
+            theme::body(theme::BODY_SIZE),
+            theme::HINT_TEXT,
+        );
+        let field = Rect::from_min_size(
+            pos2(rect.left() + 16.0, rect.top() + 70.0),
+            vec2(428.0, 28.0),
+        );
+        ui.painter().rect_filled(field, 0.0, theme::BLACK);
+        ui.painter().rect_stroke(
+            field,
+            0.0,
+            (1.0, theme::argb(0xFF333333)),
+            egui::StrokeKind::Inside,
+        );
+        let pending = dialog.pending_id.is_some();
+        let edit = egui::TextEdit::singleline(&mut dialog.url)
+            .id(Id::unique("collection-url"))
+            .frame(egui::Frame::NONE)
+            .font(theme::body(theme::BODY_SIZE))
+            .text_color(theme::WHITE)
+            .hint_text("https://steamcommunity.com/sharedfiles/filedetails/?id=")
+            .interactive(!pending);
+        let response = ui.put(field.shrink2(vec2(6.0, 1.0)), edit);
+        if !dialog.focused {
+            response.request_focus();
+            dialog.focused = true;
+        }
+        let check = checkbox16(
+            ui,
+            gfx,
+            Id::unique("collection-save"),
+            pos2(rect.left() + 24.0, rect.top() + 122.0),
+            dialog.save_preset,
+        );
+        if check.clicked() && !pending {
+            dialog.save_preset = !dialog.save_preset;
+        }
+        ui.painter().text(
+            pos2(rect.left() + 40.0, rect.top() + 122.0),
+            Align2::LEFT_CENTER,
+            "Save as preset",
+            theme::body(theme::BODY_SIZE),
+            theme::WHITE,
+        );
+        let subscribe = Rect::from_min_size(
+            pos2(rect.right() - 196.0, rect.bottom() - 46.0),
+            vec2(100.0, 30.0),
+        );
+        let cancel = Rect::from_min_size(
+            pos2(rect.right() - 90.0, rect.bottom() - 46.0),
+            vec2(74.0, 30.0),
+        );
+        let label = if pending {
+            "Contacting Steam..."
+        } else {
+            "Subscribe"
+        };
+        let clicked =
+            flat_button(ui, Id::unique("collection-subscribe"), subscribe, label).clicked();
+        let submit = !pending
+            && (clicked
+                || (response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter))));
+        let cancel = flat_button(ui, Id::unique("collection-cancel"), cancel, "Cancel").clicked();
+        if cancel {
+            self.collection = None;
+            return;
+        }
+        if !submit {
+            return;
+        }
+        let url = self
+            .collection
+            .as_ref()
+            .map(|d| d.url.clone())
+            .unwrap_or_default();
+        let Some(id) = steam::published_file_id(&url) else {
+            *env.message = Some(MessageBox::info(
+                "Workshop collection",
+                "Paste a workshop collection link.",
+            ));
+            return;
+        };
+        let Some(steam) = env.steam else {
+            *env.message = Some(MessageBox::info(
+                "Workshop collection",
+                "Mods can't be subscribed because Steam is offline. Please try it again later.",
+            ));
+            return;
+        };
+        steam.query_details(&[id]);
+        if let Some(dialog) = &mut self.collection {
+            dialog.pending_id = Some(id);
+        }
+    }
+
+    /// Workshop details arrived. If they describe the collection the dialog is waiting on, the
+    /// dialog closes and the caller subscribes to its mods.
+    pub fn take_collection(&mut self, details: &[ItemDetails]) -> Option<FoundCollection> {
+        let id = self
+            .collection
+            .as_ref()
+            .and_then(|dialog| dialog.pending_id)?;
+        let item = details.iter().find(|detail| detail.id == id)?;
+        let save_preset = self
+            .collection
+            .as_ref()
+            .is_some_and(|dialog| dialog.save_preset);
+        self.collection = None;
+        Some(FoundCollection {
+            title: item.title.clone(),
+            children: item.children.clone(),
+            save_preset,
+        })
+    }
+
+    /// Loads these mods on the next frame, through the dependency dialog.
+    pub fn queue_load(&mut self, ids: Vec<String>) {
+        self.queued_load = Some(ids);
     }
 
     /// Loads mods, asking first when they need dependencies that aren't loaded.
@@ -1431,7 +1629,7 @@ impl ModsPage {
                 ui.painter().rect_stroke(
                     field,
                     0.0,
-                    (1.0, theme::ACCENT),
+                    (1.0, theme::accent()),
                     egui::StrokeKind::Inside,
                 );
                 let edit = egui::TextEdit::singleline(name)
@@ -1530,7 +1728,7 @@ impl ModsPage {
                         ui.painter().rect_stroke(
                             select,
                             0.0,
-                            (1.0, theme::ACCENT),
+                            (1.0, theme::accent()),
                             egui::StrokeKind::Inside,
                         );
                         let r = ui.put(select.shrink2(vec2(6.0, 1.0)), edit);

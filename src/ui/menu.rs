@@ -67,6 +67,8 @@ pub enum Confirm {
     ResumePlay,
     /// Start the last game command again without BattlEye (`BEError`).
     PlayWithoutBattlEye,
+    /// Open the report offered after the game exits.
+    OpenRpt,
 }
 
 pub struct MessageBox {
@@ -144,7 +146,7 @@ impl MessageBox {
             );
             right -= w + 10.0;
             if i == 0 {
-                ui.painter().rect_filled(b, 0.0, theme::ACCENT);
+                ui.painter().rect_filled(b, 0.0, theme::accent());
             }
             let response = if i == 0 {
                 let r =

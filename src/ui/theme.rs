@@ -1,7 +1,49 @@
-//! Colours, fonts and metrics of the vanilla launcher's default theme (`SharedResources`
-//! `colors.xaml` / `brushes.xaml` / `fonts.xaml` and the launcher's `DefaultStyle`).
+//! Colours, fonts and metrics of the vanilla launcher (`SharedResources` `colors.xaml` /
+//! `brushes.xaml` / `fonts.xaml` and the launcher's `DefaultStyle`).
+//!
+//! `LauncherViewModel.GetThemeByIndex` only swaps the background image and sets every theme's
+//! window brush to black. The accent and panel brushes live in the shared style, so each
+//! `ThemeIndex` resolves to that one palette.
+
+use std::cell::Cell;
 
 use eframe::egui::{Color32, FontFamily, FontId};
+
+thread_local! {
+    static THEME_INDEX: Cell<u8> = const { Cell::new(1) };
+}
+
+/// Selects the palette for `ThemeIndex`. `0` is the unset value vanilla treats as Decent Black.
+pub fn set_index(index: &str) {
+    let index = if index == "0" { "2" } else { index };
+    THEME_INDEX.with(|cell| cell.set(index.parse().unwrap_or(1)));
+}
+
+const VANILLA_ACCENT: u32 = 0xFFD18F21;
+const VANILLA_ACCENT_HOVER: u32 = 0xFFEFA933;
+const VANILLA_ACCENT_PRESSED: u32 = 0xFFF6A112;
+
+/// Accent, hover, pressed for each `ThemeIndex`. Every entry is the shared brush: that is what
+/// the vanilla launcher uses.
+const ACCENTS: [(u32, u32, u32); 7] =
+    [(VANILLA_ACCENT, VANILLA_ACCENT_HOVER, VANILLA_ACCENT_PRESSED); 7];
+
+fn accent_triple() -> (u32, u32, u32) {
+    let index = THEME_INDEX.with(Cell::get) as usize;
+    ACCENTS.get(index).copied().unwrap_or(ACCENTS[1])
+}
+
+pub fn accent() -> Color32 {
+    argb(accent_triple().0)
+}
+
+pub fn accent_hover() -> Color32 {
+    argb(accent_triple().1)
+}
+
+pub fn accent_pressed() -> Color32 {
+    argb(accent_triple().2)
+}
 
 /// A WPF `#AARRGGBB` colour (WPF blends in sRGB space, as egui does).
 pub const fn argb(v: u32) -> Color32 {
@@ -18,9 +60,6 @@ const fn premultiply(channel: u32, alpha: u32) -> u8 {
     (((channel & 0xFF) * alpha + 127) / 255) as u8
 }
 
-pub const ACCENT: Color32 = argb(0xFFD18F21);
-pub const ACCENT_HOVER: Color32 = argb(0xFFEFA933);
-pub const ACCENT_PRESSED: Color32 = argb(0xFFF6A112);
 /// `Color.SteamBlue.*`: PLAY with optional DLC, the "Optional" DLC tag.
 pub const STEAM_BLUE: Color32 = argb(0xFF01BAFB);
 pub const STEAM_BLUE_HOVER: Color32 = argb(0xFF4DCFFC);
@@ -92,6 +131,13 @@ pub const BODY_SIZE: f32 = 14.0;
 pub const HEADER_SIZE: f32 = 17.0;
 
 /// Window geometry at the default 970 × 690 size.
+///
+/// Linux reserves this around the launcher and paints the shadow there. Windows does not: the
+/// margin is part of the client area, and a black shadow on that transparent frame reads as an
+/// empty box. The desktop composite draws the window shadow outside the client area instead.
+#[cfg(windows)]
+pub const SHADOW_DEPTH: f32 = 0.0;
+#[cfg(not(windows))]
 pub const SHADOW_DEPTH: f32 = 16.0;
 pub const TITLE_HEIGHT: f32 = 78.0;
 pub const NAV_WIDTH: f32 = 236.0;
@@ -102,3 +148,18 @@ pub const STATUS_HEIGHT: f32 = 46.0;
 pub const TAB_HEIGHT: f32 = 40.0;
 /// Resize border: left, top, right, bottom.
 pub const RESIZE_BORDER: [f32; 4] = [6.0, 3.0, 3.0, 6.0];
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_theme_uses_the_shared_accent() {
+        for index in ["0", "1", "2", "3", "4", "5", "6"] {
+            set_index(index);
+            assert_eq!(accent(), argb(VANILLA_ACCENT));
+            assert_eq!(accent_hover(), argb(VANILLA_ACCENT_HOVER));
+            assert_eq!(accent_pressed(), argb(VANILLA_ACCENT_PRESSED));
+        }
+    }
+}

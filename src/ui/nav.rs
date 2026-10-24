@@ -79,15 +79,15 @@ impl Nav {
                 win.min + vec2(0.0, self.active.value(&ctx)),
                 vec2(theme::NAV_ACCENT_WIDTH, theme::NAV_ITEM_HEIGHT),
             );
-            ui.painter().rect_filled(bar, 0.0, theme::ACCENT);
+            ui.painter().rect_filled(bar, 0.0, theme::accent());
         }
 
         let font = theme::heading(21.0);
         for &item in &Page::ALL {
             let color = if pressed_slot == Some(item) {
-                theme::ACCENT_PRESSED
+                theme::accent_pressed()
             } else if item == page {
-                theme::ACCENT
+                theme::accent()
             } else {
                 theme::WHITE
             };
@@ -107,7 +107,7 @@ impl Nav {
                     ),
                     vec2(24.0, 24.0),
                 );
-                ui.painter().rect_filled(badge, 4.0, theme::ACCENT);
+                ui.painter().rect_filled(badge, 4.0, theme::accent());
                 let count = ui.painter().layout_no_wrap(
                     news_unread.to_string(),
                     theme::body(theme::BODY_SIZE),

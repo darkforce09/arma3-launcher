@@ -378,14 +378,7 @@ pub fn platforms(game_dir: &Path) -> Vec<(&'static str, &'static str)> {
 
 /// Total installed memory in MB, the `maxmem` maximum.
 pub fn total_memory_mb() -> i64 {
-    std::fs::read_to_string("/proc/meminfo")
-        .ok()
-        .and_then(|m| {
-            m.lines()
-                .find(|l| l.starts_with("MemTotal:"))
-                .and_then(|l| l.split_whitespace().nth(1)?.parse::<i64>().ok())
-        })
-        .map_or(65536, |kb| kb / 1024)
+    crate::platform::total_memory_mb().unwrap_or(65536)
 }
 
 #[cfg(test)]

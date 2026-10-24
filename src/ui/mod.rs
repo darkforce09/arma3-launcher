@@ -17,7 +17,7 @@ mod options;
 mod parameters;
 mod rich;
 mod servers;
-mod theme;
+pub(crate) mod theme;
 mod widgets;
 
 use std::collections::HashMap;
@@ -38,9 +38,9 @@ use crate::paths::GamePaths;
 use crate::state::State;
 use crate::steam::{ItemDetails, Steam, SteamEvent};
 use crate::steam_cmd::SteamCommand;
+use crate::vanilla::game_path;
 use crate::vanilla::local_mods::LocalMods;
 use crate::vanilla::user_config::{PRESET_SETTINGS, UserConfig};
-use crate::vanilla::wine_path;
 
 const CONTACT_APP_ID: u32 = 1021790;
 /// How often Steam is asked about downloads while some are running.
@@ -144,6 +144,17 @@ pub struct LauncherApp<'a> {
     units_rx: Receiver<crate::units::Units>,
     /// The game, while the launcher stays open after PLAY.
     game: Option<std::process::Child>,
+    /// When the current game process was started, for the report written after it.
+    game_started: Option<std::time::SystemTime>,
+    /// A report check running after the game exits: the receiver and the shutdown mode to apply.
+    rpt_check: Option<(Receiver<Option<std::path::PathBuf>>, String)>,
+    /// The report the dialog offers to open.
+    pending_rpt: Option<std::path::PathBuf>,
+    /// Close the launcher once that dialog is answered (`CloseAfter`).
+    close_after_report: bool,
+    /// Collection mods waiting for Steam details before the dependency dialog: ids and the time
+    /// the query was sent.
+    collection_load: Option<(Vec<u64>, f64)>,
     /// The last game executable and arguments, to start again without BattlEye.
     last_game: Option<(&'static str, Vec<String>)>,
     /// BattlEye's status reports while the game started through it runs.
@@ -219,10 +230,7 @@ impl<'a> LauncherApp<'a> {
 
         let settings = Settings::new(user_config, &startup.paths.game_dir);
         let page = Page::from_default_index(&settings.get("DefaultPageIndex"));
-        let documents = startup
-            .paths
-            .prefix
-            .join("drive_c/users/steamuser/Documents");
+        let documents = startup.paths.documents();
         let servers_page = servers::ServersPage::new(
             startup.paths.launcher_data.clone(),
             startup.paths.game_dir.clone(),
@@ -256,6 +264,11 @@ impl<'a> LauncherApp<'a> {
             options_page: options::OptionsPage::new(),
             servers_page,
             game: None,
+            game_started: None,
+            rpt_check: None,
+            pending_rpt: None,
+            close_after_report: false,
+            collection_load: None,
             last_game: None,
             battleye_rx: None,
             battleye_log: crate::battleye::Log::default(),
@@ -289,6 +302,7 @@ impl<'a> LauncherApp<'a> {
         let (Some(library), Some(steam)) = (&mut self.library, self.steam) else {
             return;
         };
+        let mut found_collection = None;
         while let Some(event) = steam.try_event() {
             match event {
                 SteamEvent::Details(details) => {
@@ -300,6 +314,9 @@ impl<'a> LauncherApp<'a> {
                         }
                     }
                     library.merge_details(&details);
+                    if found_collection.is_none() {
+                        found_collection = self.mods_page.take_collection(&details);
+                    }
                 }
                 SteamEvent::Author { owner, name } => {
                     if name.is_empty() {
@@ -327,7 +344,49 @@ impl<'a> LauncherApp<'a> {
                 }
             }
         }
+        if let Some(found) = found_collection {
+            let mut children: Vec<u64> = found.children.into_iter().filter(|id| *id != 0).collect();
+            children.sort_unstable();
+            children.dedup();
+            if children.is_empty() {
+                self.message = Some(menu::MessageBox::info(
+                    "Workshop collection",
+                    "This workshop item has no mods.",
+                ));
+            } else {
+                for id in &children {
+                    steam.subscribe(*id);
+                    if !self.awaiting_items.contains(id) {
+                        self.awaiting_items.push(*id);
+                    }
+                }
+                steam.query_details(&children);
+                if found.save_preset {
+                    let name = mods::collection_preset_name(&found.title);
+                    let ids = children
+                        .iter()
+                        .map(|id| crate::mods::steam_id(*id))
+                        .collect();
+                    if let Err(e) = library.write_preset(&name, ids) {
+                        self.message = Some(menu::MessageBox::info(
+                            "Workshop collection",
+                            format!("Could not save the preset: {e}"),
+                        ));
+                    }
+                }
+                self.collection_load = Some((children, ctx.input(|i| i.time)));
+            }
+        }
         let now = ctx.input(|i| i.time);
+        if let Some((ids, since)) = self.collection_load.clone() {
+            let ready = ids.iter().all(|id| self.workshop.contains_key(id)) || now - since > 5.0;
+            if ready {
+                self.collection_load = None;
+                self.mods_page
+                    .queue_load(ids.into_iter().map(crate::mods::steam_id).collect());
+                self.page = Page::Mods;
+            }
+        }
         // Items subscribed this session count as busy until they're installed.
         self.awaiting_items.retain(|id| {
             library
@@ -496,6 +555,7 @@ impl<'a> LauncherApp<'a> {
                 }
                 match command.spawn() {
                     Ok(mut child) => {
+                        self.game_started = Some(std::time::SystemTime::now());
                         self.battleye_rx = child.stdout.take().map(|output| {
                             let (tx, rx) = channel();
                             let ctx = ctx.clone();
@@ -600,7 +660,7 @@ impl<'a> LauncherApp<'a> {
                 win,
                 &[
                     ("Some mods were recently ", white),
-                    ("updated", theme::ACCENT),
+                    ("updated", theme::accent()),
                 ],
             );
         } else if self.steam.is_none() {
@@ -676,6 +736,12 @@ impl<'a> LauncherApp<'a> {
             .show(|ui| {
                 ui.spacing_mut().item_spacing = egui::vec2(0.0, 0.0);
                 open_options = menu::item(ui, "Launcher Options", true);
+                let latest_rpt = crate::rpt::newest(&self.paths.arma_local());
+                if menu::item(ui, "Open latest RPT", latest_rpt.is_some())
+                    && let Some(path) = latest_rpt
+                {
+                    let _ = open::that_detached(path);
+                }
                 menu::separator(ui);
                 for (label, key) in [("Feedback", "FeedbackUrl"), ("Support", "SupportUrl")] {
                     if menu::item(ui, &format!("{label} \u{2197}"), true) {
@@ -731,19 +797,65 @@ impl<'a> LauncherApp<'a> {
     }
 
     /// While the game runs with the launcher open: restore a minimised launcher, or close it,
-    /// when the game ends (`LauncherShutdownMode`).
+    /// when the game ends (`LauncherShutdownMode`). A report newer than the launch that records
+    /// an error is offered first.
     fn watch_game(&mut self, ctx: &egui::Context) {
-        let Some(game) = &mut self.game else { return };
-        match game.try_wait() {
-            Ok(None) => ctx.request_repaint_after(Duration::from_secs(1)),
-            _ => {
+        if self.game.is_some() {
+            let still_running = matches!(self.game.as_mut().unwrap().try_wait(), Ok(None));
+            if still_running {
+                ctx.request_repaint_after(Duration::from_secs(1));
+            } else {
                 self.game = None;
-                match self.settings.get("LauncherShutdownMode").as_str() {
-                    "Minimize" => ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false)),
-                    "CloseAfter" => ctx.send_viewport_cmd(egui::ViewportCommand::Close),
-                    _ => {}
-                }
+                let mode = self.settings.get("LauncherShutdownMode");
+                let dir = self.paths.arma_local();
+                let started = self.game_started;
+                let (tx, rx) = channel();
+                std::thread::spawn(move || {
+                    let path = started.and_then(|started| {
+                        let path = crate::rpt::newest(&dir)?;
+                        let modified = path.metadata().ok()?.modified().ok()?;
+                        (modified >= started && crate::rpt::has_error(&path)).then_some(path)
+                    });
+                    let _ = tx.send(path);
+                });
+                self.rpt_check = Some((rx, mode));
             }
+        }
+        let Some((rx, mode)) = &self.rpt_check else {
+            return;
+        };
+        let Ok(found) = rx.try_recv() else {
+            ctx.request_repaint_after(Duration::from_millis(200));
+            return;
+        };
+        let mode = mode.clone();
+        self.rpt_check = None;
+        if let Some(path) = found {
+            let name = path
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_else(|| "report".into());
+            self.pending_rpt = Some(path);
+            self.close_after_report = mode == "CloseAfter";
+            if mode == "Minimize" {
+                ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
+            }
+            self.message = Some(menu::MessageBox {
+                caption: "Arma 3 report".into(),
+                body: format!("Arma 3 ended with errors in {name}.\n\nOpen the report?"),
+                buttons: vec!["Open".into(), "Close".into()],
+                confirm: Some(menu::Confirm::OpenRpt),
+            });
+        } else {
+            self.finish_shutdown(ctx, &mode);
+        }
+    }
+
+    fn finish_shutdown(&self, ctx: &egui::Context, mode: &str) {
+        match mode {
+            "Minimize" => ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false)),
+            "CloseAfter" => ctx.send_viewport_cmd(egui::ViewportCommand::Close),
+            _ => {}
         }
     }
 
@@ -755,6 +867,11 @@ impl<'a> LauncherApp<'a> {
                 if let (Some(command), Some((exe, args))) = (&self.steam_command, &self.last_game) {
                     let game = command.game_command(exe, false, args);
                     self.start_game(ctx, game, false);
+                }
+            }
+            menu::Confirm::OpenRpt => {
+                if let Some(path) = self.pending_rpt.take() {
+                    let _ = open::that_detached(path);
                 }
             }
             menu::Confirm::UnsubscribeAll => {
@@ -785,6 +902,9 @@ impl eframe::App for LauncherApp<'_> {
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
+        theme::set_index(&self.settings.get("ThemeIndex"));
+        #[cfg(windows)]
+        crate::platform::disable_rounded_corners();
         self.update_library(&ctx);
         let state = chrome::window_state(&ctx);
         if let Some(rect) = ctx.input(|i| i.viewport().inner_rect)
@@ -1009,7 +1129,7 @@ impl eframe::App for LauncherApp<'_> {
             let contact = crate::fs_case::resolve(&self.paths.game_dir, "contact");
             self.play(
                 &ctx,
-                Some(contact.iter().map(|c| wine_path(c)).collect()),
+                Some(contact.iter().map(|c| game_path(c)).collect()),
                 Vec::new(),
             );
         }
@@ -1028,9 +1148,14 @@ impl eframe::App for LauncherApp<'_> {
             && let Some(button) = message.show(ui, win)
         {
             let confirm = message.confirm.filter(|_| button == 0);
+            let close_after = self.close_after_report;
+            self.close_after_report = false;
             self.message = None;
             if let Some(confirm) = confirm {
                 self.handle_confirm(&ctx, confirm);
+            }
+            if close_after {
+                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
             }
         }
         if let Some(eula) = &mut self.eula {
@@ -1193,7 +1318,7 @@ fn install_style(ctx: &egui::Context) {
     ctx.global_style_mut(|style| {
         let v = &mut style.visuals;
         v.dark_mode = true;
-        v.selection.bg_fill = theme::ACCENT;
+        v.selection.bg_fill = theme::accent();
         v.selection.stroke = egui::Stroke::new(1.0, theme::WHITE);
         v.text_cursor.stroke = egui::Stroke::new(1.0, theme::WHITE);
         v.extreme_bg_color = theme::BLACK;

@@ -137,7 +137,7 @@ pub fn scan(input: &ScanInput) -> Vec<Mod> {
 
     let mut seen_paths = HashSet::new();
     let mut local = |windows_path: &str, auto: bool| {
-        let Some(path) = input.drives.to_unix(windows_path) else {
+        let Some(path) = crate::vanilla::host_path(input.drives, windows_path) else {
             return;
         };
         if !seen_paths.insert(path.clone()) || !path.is_dir() {
@@ -154,11 +154,11 @@ pub fn scan(input: &ScanInput) -> Vec<Mod> {
         local(dir, false);
     }
     for watched in &input.local.autodetection_directories {
-        let Some(root) = input.drives.to_unix(watched) else {
+        let Some(root) = crate::vanilla::host_path(input.drives, watched) else {
             continue;
         };
         for folder in detect_mods(&root, input.game_dir) {
-            local(&crate::vanilla::wine_path(&folder), true);
+            local(&crate::vanilla::game_path(&folder), true);
         }
     }
 

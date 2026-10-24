@@ -242,7 +242,7 @@ pub fn eula(ui: &mut egui::Ui, win: Rect, licence: &str) -> Option<bool> {
     const LINK: &str = "http://www.battleye.com";
     let link_width = ui
         .painter()
-        .layout_no_wrap(LINK.into(), font.clone(), theme::ACCENT)
+        .layout_no_wrap(LINK.into(), font.clone(), theme::accent())
         .size()
         .x;
     let mut link_pos = pos2(inner.left() + more_size.x, y);
@@ -316,13 +316,13 @@ pub fn eula(ui: &mut egui::Ui, win: Rect, licence: &str) -> Option<bool> {
 pub fn hyperlink(ui: &mut egui::Ui, id: Id, pos: egui::Pos2, text: &str, right: &mut f32) -> bool {
     let galley =
         ui.painter()
-            .layout_no_wrap(text.into(), theme::body(theme::BODY_SIZE), theme::ACCENT);
+            .layout_no_wrap(text.into(), theme::body(theme::BODY_SIZE), theme::accent());
     let rect = Rect::from_min_size(pos, galley.size());
     let response = ui.interact(rect, id, Sense::click());
     let color = if response.hovered() {
         egui::Color32::RED
     } else {
-        theme::ACCENT
+        theme::accent()
     };
     let galley = ui
         .painter()

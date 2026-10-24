@@ -1,5 +1,6 @@
-//! The launcher's own state between runs, in `$XDG_STATE_HOME/arma3-launcher/state.json`: things
-//! the vanilla launcher keeps in files this launcher doesn't own.
+//! The launcher's own state between runs (`state.json` in the state directory): things the
+//! vanilla launcher keeps in files this launcher doesn't own. Linux uses `$XDG_STATE_HOME`;
+//! Windows uses `%LOCALAPPDATA%\arma3-launcher`.
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -23,10 +24,7 @@ pub struct State {
 }
 
 fn path() -> Option<PathBuf> {
-    let base = std::env::var_os("XDG_STATE_HOME")
-        .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/state")))?;
-    Some(base.join("arma3-launcher/state.json"))
+    crate::platform::state_dir().map(|dir| dir.join("state.json"))
 }
 
 impl State {

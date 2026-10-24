@@ -13,7 +13,7 @@ use super::widgets::{
 };
 use super::{icons, theme};
 use crate::params::{self, DEFS, Def, GROUPS, Kind, Settings};
-use crate::vanilla::wine_path;
+use crate::vanilla::game_path;
 
 const ROW_HEIGHT: f32 = 40.0;
 const EDITOR_HEIGHT: f32 = 26.0;
@@ -57,7 +57,7 @@ impl ParametersPage {
         // File and folder dialog results: set the value (folder lists append) and enable it.
         while let Ok((value_setting, path, append)) = self.picked_rx.try_recv() {
             let def = DEFS.iter().find(|d| d.value == value_setting);
-            let mut value = wine_path(&path);
+            let mut value = game_path(&path);
             if append {
                 let current = settings.get(value_setting);
                 if !current.trim().is_empty() {
@@ -248,7 +248,7 @@ impl ParametersPage {
                     } else {
                         icons::FAVORITE_STAR
                     },
-                    theme::ACCENT,
+                    theme::accent(),
                 )
             } else {
                 (icons::FAVORITE_STAR, theme::WHITE.gamma_multiply(0.8))
