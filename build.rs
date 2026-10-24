@@ -20,7 +20,14 @@ fn main() {
 /// The source directory of the `steamworks-sys` crate, which ships the Steamworks redistributable.
 fn steamworks_sys_dir() -> PathBuf {
     let out = Command::new(std::env::var("CARGO").unwrap())
-        .args(["metadata", "--format-version", "1", "--offline"])
+        .args([
+            "metadata",
+            "--format-version",
+            "1",
+            "--locked",
+            "--filter-platform",
+        ])
+        .arg(std::env::var("TARGET").unwrap())
         .output()
         .expect("cargo metadata runs");
     assert!(
