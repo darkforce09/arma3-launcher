@@ -127,7 +127,7 @@ fn start_game(command: &[OsString]) -> ExitCode {
     #[cfg(unix)]
     {
         use std::os::unix::process::CommandExt;
-        let child = steam_env::command_with_steam_env(command);
+        let mut child = steam_env::command_with_steam_env(command);
         let e = child.exec();
         platform::log_error(&format!("starting the game failed: {e}"));
         ExitCode::FAILURE
