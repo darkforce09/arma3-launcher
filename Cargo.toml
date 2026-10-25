@@ -7,7 +7,6 @@ publish = false
 
 [dependencies]
 chrono = { version = "0.4.45", default-features = false, features = ["clock", "std"] }
-eframe = { version = "0.37.0", default-features = false, features = ["accesskit", "clipboard", "default_fonts", "glow", "wayland", "x11"] }
 image = { version = "0.25.10", default-features = false, features = ["png", "jpeg"] }
 memmap2 = "0.9.11"
 open = "5.4.4"
@@ -21,6 +20,22 @@ rfd = "0.17.2"
 steamworks = "0.13.1"
 steamworks-sys = "0.13.0"
 ureq = { version = "3.4.2", features = ["json"] }
+
+[target.'cfg(unix)'.dependencies]
+eframe = { version = "0.37.0", default-features = false, features = ["accesskit", "clipboard", "default_fonts", "glow", "wayland", "x11"] }
+
+[target.'cfg(windows)'.dependencies]
+eframe = { version = "0.37.0", default-features = false, features = ["accesskit", "clipboard", "default_fonts", "glow"] }
+windows-sys = { version = "0.59", features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Dwm",
+    "Win32_System_Com",
+    "Win32_System_LibraryLoader",
+    "Win32_System_Registry",
+    "Win32_System_SystemInformation",
+    "Win32_UI_Shell",
+    "Win32_UI_WindowsAndMessaging",
+] }
 
 [build-dependencies]
 serde_json = "1.0.154"

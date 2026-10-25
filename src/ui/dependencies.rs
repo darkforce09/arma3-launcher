@@ -511,7 +511,7 @@ fn footer(ui: &mut egui::Ui, rect: Rect, labels: &[&str]) -> Option<usize> {
         );
         right -= w + 10.0;
         let response = if i == 0 && labels.len() > 1 {
-            ui.painter().rect_filled(b, 0.0, theme::ACCENT);
+            ui.painter().rect_filled(b, 0.0, theme::accent());
             let r =
                 super::widgets::overlay_button(ui, Id::unique(("dependency-footer", *label)), b);
             ui.painter().text(

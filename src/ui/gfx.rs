@@ -221,12 +221,9 @@ fn rasterise_path(data: &str, w: u32, h: u32) -> Option<ColorImage> {
     ))
 }
 
-/// The bytes at `url`, from the disk cache (`$XDG_CACHE_HOME/arma3-launcher/http`) when present.
+/// The bytes at `url`, from the disk cache when present.
 fn fetch_cached(url: &str) -> Option<Vec<u8>> {
-    let dir = std::env::var_os("XDG_CACHE_HOME")
-        .map(std::path::PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".cache")))?
-        .join("arma3-launcher/http");
+    let dir = crate::platform::cache_dir()?;
     // FNV-1a: a file name that stays the same across builds.
     let hash = url.bytes().fold(0xcbf2_9ce4_8422_2325u64, |h, b| {
         (h ^ u64::from(b)).wrapping_mul(0x0100_0000_01b3)

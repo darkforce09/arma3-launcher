@@ -15,7 +15,7 @@ Native Linux replacement for the vanilla Arma 3 launcher: Rust + egui, same look
 - `.workstation/` (gitignored): `decompiled/` vanilla launcher source (ilspycmd output), `findings/` notes on it with source paths, `tools/` (.NET SDK, ilspycmd), `logs/`.
 
 ## Repository map
-- `build.rs`: copies `libsteam_api.so` next to the binary (`$ORIGIN` rpath).
+- `build.rs`: on Linux, copies `libsteam_api.so` next to the binary (`$ORIGIN` rpath). On Windows, embeds that crate's `steam_api64.dll` and delay-loads it from `%LOCALAPPDATA%\arma3-launcher`, so the older DLL in the game folder is not used.
 - `src/main.rs`: entry, Steam connection, window, hand-over to the game. `src/steam_env.rs` keeps Steam's `LD_PRELOAD`/`LD_LIBRARY_PATH` away from the UI; `src/steam_cmd.rs` rewrites Steam's `%command%` into the game command.
 - `src/assets.rs`: images and fonts read from the install's resource DLLs. `src/paths.rs`, `src/fs_case.rs`, `src/vdf.rs`: where things are.
 - `src/vanilla/`: the vanilla launcher's files (presets, preset HTML, `user.config`, `Local.json`, caches).

@@ -43,7 +43,7 @@ pub fn paint_frame(
     background: Option<&str>,
 ) {
     let painter = ui.painter().clone();
-    if !state.maximized {
+    if !state.maximized && theme::SHADOW_DEPTH > 0.0 {
         let color = if state.focused {
             theme::SHADOW_ACTIVE
         } else {
@@ -118,7 +118,7 @@ pub fn caption_buttons(
                 ui.painter().rect_filled(rect, 0.0, theme::CAPTION_HOVER);
             }
             let tint = if response.is_pointer_button_down_on() {
-                theme::ACCENT
+                theme::accent()
             } else {
                 theme::WHITE
             };
@@ -168,7 +168,7 @@ pub fn caption_buttons(
     );
     let response = ui.interact(rect, Id::unique("caption-options"), Sense::click());
     let color = if response.is_pointer_button_down_on() {
-        theme::ACCENT
+        theme::accent()
     } else if response.hovered() {
         ui.painter().rect_filled(rect, 0.0, theme::CAPTION_HOVER);
         theme::WHITE

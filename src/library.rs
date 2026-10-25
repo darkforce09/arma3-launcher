@@ -6,8 +6,8 @@ use std::path::PathBuf;
 
 use crate::mods::{self, Mod, Source, Status};
 use crate::steam::{ItemDetails, ItemSnapshot};
+use crate::vanilla::game_path;
 use crate::vanilla::preset::{self, DEFAULT_PRESET_FILE, Preset};
-use crate::vanilla::wine_path;
 
 /// A dependency in a mod's chain.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -276,6 +276,20 @@ impl Library {
         self.active_preset = Some(name.to_owned());
     }
 
+    /// Writes preset `name` from `mods` without changing what is loaded.
+    pub fn write_preset(&mut self, name: &str, mods: Vec<String>) -> io::Result<()> {
+        let preset = Preset::new(mods, Vec::new());
+        preset.save(&preset::preset_path(&self.presets_dir, name))?;
+        match self.presets.iter_mut().find(|(n, _)| n == name) {
+            Some((_, stored)) => *stored = preset,
+            None => {
+                self.presets.push((name.to_owned(), preset));
+                self.presets.sort_by_key(|(n, _)| n.to_lowercase());
+            }
+        }
+        Ok(())
+    }
+
     /// Saves the loaded mods and DLC as preset `name` and makes it active.
     pub fn save_preset(&mut self, name: &str) -> io::Result<()> {
         let preset = Preset::new(self.loaded.clone(), self.dlcs.clone());
@@ -337,7 +351,7 @@ impl Library {
         self.mod_paths(&ids)
     }
 
-    /// The `-mod` entries for the loaded mods that can run: dependencies first, as Wine paths.
+    /// The `-mod` entries for the loaded mods that can run: dependencies first, as the game sees them.
     pub fn launch_mod_paths(&self) -> Vec<String> {
         self.mod_paths(&self.loaded)
     }
@@ -348,7 +362,7 @@ impl Library {
             .iter()
             .filter_map(|id| index.get(id.as_str()))
             .filter(|m| m.launchable())
-            .map(|m| wine_path(&m.path))
+            .map(|m| game_path(&m.path))
             .collect()
     }
 
@@ -517,7 +531,11 @@ mod tests {
         assert_eq!(lib.loaded, ["steam:2", "steam:1", "steam:3"]);
         assert_eq!(
             lib.launch_mod_paths(),
-            [r"Z:\mods\steam:2", r"Z:\mods\steam:1", r"Z:\mods\steam:3"]
+            [
+                game_path(&PathBuf::from("/mods/steam:2")),
+                game_path(&PathBuf::from("/mods/steam:1")),
+                game_path(&PathBuf::from("/mods/steam:3")),
+            ]
         );
         lib.unload("steam:2");
         assert_eq!(lib.loaded, ["steam:1", "steam:3"]);

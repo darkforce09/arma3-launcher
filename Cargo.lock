@@ -203,6 +203,7 @@ dependencies = [
  "steamworks",
  "steamworks-sys",
  "ureq",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]

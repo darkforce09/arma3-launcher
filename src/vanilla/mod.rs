@@ -104,12 +104,17 @@ pub fn workshop_cache(launcher_data: &Path) -> HashMap<u64, WorkshopInfo> {
 
 /// Maps Windows paths in the vanilla launcher's files back to Linux paths: `Z:` is `/`, `S:` is
 /// the Steam root Proton maps for the game, other drives follow the prefix's `dosdevices`.
+///
+/// On Windows the host path is the path itself, so this map is only used by tests.
+#[cfg_attr(windows, allow(dead_code))]
 pub struct DriveMap {
     pub dosdevices: PathBuf,
     pub steam_root: PathBuf,
 }
 
 impl DriveMap {
+    /// Linux path for a path stored by the vanilla launcher. Used on Linux, and by tests.
+    #[cfg_attr(windows, allow(dead_code))]
     pub fn to_unix(&self, windows: &str) -> Option<PathBuf> {
         let (drive, rest) = windows.split_once(':')?;
         let rest = rest.replace('\\', "/");
@@ -132,8 +137,50 @@ impl DriveMap {
 }
 
 /// A Linux path as the game sees it under Wine: on the `Z:` drive, with backslashes.
+/// Used on Linux, and by tests.
+#[cfg_attr(windows, allow(dead_code))]
 pub fn wine_path(path: &Path) -> String {
     format!("Z:{}", path.to_string_lossy().replace('/', "\\"))
+}
+
+/// A host path as the game and the vanilla launcher store it.
+///
+/// Linux keeps the `Z:` form. Windows is already the path the game uses: backslashes, no `\\?`
+/// prefix, and no extra trailing slash (`local_mod_id` adds the one vanilla expects).
+pub fn game_path(path: &Path) -> String {
+    #[cfg(windows)]
+    {
+        let mut text = path.to_string_lossy().replace('/', "\\");
+        if let Some(rest) = text.strip_prefix(r"\\?\") {
+            text = rest.to_owned();
+        }
+        if text.len() > 3 && text.ends_with('\\') {
+            text.pop();
+        }
+        text
+    }
+    #[cfg(not(windows))]
+    {
+        wine_path(path)
+    }
+}
+
+/// A path stored by the vanilla launcher, as a host path.
+///
+/// Linux maps `Z:` to `/`, `S:` to the Steam root, and other letters through `dosdevices`.
+/// Windows uses the drive or UNC path itself. A `Z:` path written on Linux is a `Z:` drive here,
+/// which does not exist.
+pub fn host_path(drives: &DriveMap, windows: &str) -> Option<PathBuf> {
+    #[cfg(windows)]
+    {
+        let _ = drives;
+        let path = PathBuf::from(windows.trim());
+        path.is_absolute().then_some(path)
+    }
+    #[cfg(not(windows))]
+    {
+        drives.to_unix(windows)
+    }
 }
 
 /// The vanilla identifier of a local mod: `local:` + the upper-cased Windows path with a
@@ -168,6 +215,30 @@ mod tests {
         );
         assert_eq!(map.to_unix(r"Q:\x"), None);
         assert_eq!(wine_path(Path::new("/home/u/@TFAR")), r"Z:\home\u\@TFAR");
+        #[cfg(windows)]
+        {
+            assert_eq!(
+                game_path(Path::new(r"C:\Users\A\@TFAR")),
+                r"C:\Users\A\@TFAR"
+            );
+            assert_eq!(
+                game_path(Path::new(r"C:\Users\A\@TFAR\")),
+                r"C:\Users\A\@TFAR"
+            );
+            assert_eq!(
+                host_path(&map, r"C:\Users\A\@TFAR"),
+                Some(PathBuf::from(r"C:\Users\A\@TFAR"))
+            );
+            assert!(host_path(&map, r"\\server\share\@TFAR").is_some());
+        }
+        #[cfg(not(windows))]
+        {
+            assert_eq!(game_path(Path::new("/home/u/@TFAR")), r"Z:\home\u\@TFAR");
+            assert_eq!(
+                host_path(&map, r"Z:\home\u\Mods\@TFAR"),
+                Some(PathBuf::from("/home/u/Mods/@TFAR"))
+            );
+        }
         assert_eq!(
             local_mod_id(r"Z:\home\Samuel\Games\Arma3\WogMods\@TFAR"),
             r"local:Z:\HOME\SAMUEL\GAMES\ARMA3\WOGMODS\@TFAR\"

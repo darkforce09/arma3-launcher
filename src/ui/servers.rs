@@ -827,7 +827,7 @@ impl ServersPage {
             egui::TextFormat::simple(
                 font.clone(),
                 if filtering {
-                    theme::ACCENT
+                    theme::accent()
                 } else {
                     theme::WHITE
                 },
@@ -886,7 +886,7 @@ impl ServersPage {
             (
                 1.0,
                 if active {
-                    theme::ACCENT
+                    theme::accent()
                 } else {
                     theme::argb(0xFF333333)
                 },
@@ -952,7 +952,7 @@ impl ServersPage {
             .find(|(s, _)| *s == sort)
             .map_or("None", |(_, n)| n);
         let sort_color = if response.hovered() {
-            theme::ACCENT
+            theme::accent()
         } else {
             color
         };
@@ -1181,9 +1181,9 @@ impl ServersPage {
             let fill = if locked {
                 theme::argb(0xFF800000)
             } else if j.hovered() {
-                theme::ACCENT_HOVER
+                theme::accent_hover()
             } else {
-                theme::ACCENT
+                theme::accent()
             };
             ui.painter().rect_filled(join, 0.0, fill);
             ui.painter().text(
@@ -1581,7 +1581,7 @@ impl ServersPage {
                 );
                 right -= w + 10.0;
                 if i == 0 {
-                    ui.painter().rect_filled(b, 0.0, theme::ACCENT);
+                    ui.painter().rect_filled(b, 0.0, theme::accent());
                     let r = widgets::overlay_button(ui, Id::unique(("dialog-button", *label)), b);
                     ui.painter().text(
                         b.center(),
@@ -1745,7 +1745,7 @@ impl ServersPage {
                     Align2::LEFT_TOP,
                     server.display_name(),
                     theme::heading(17.0),
-                    theme::ACCENT,
+                    theme::accent(),
                 );
                 y += 28.0;
                 let rules = self.rules.get(&key).cloned();
@@ -1792,12 +1792,12 @@ impl ServersPage {
                                         }
                                         (Some(l), _) if l.workshop_id().is_some() => {
                                             not_installed.extend(l.workshop_id());
-                                            (l.status.label(), theme::ACCENT)
+                                            (l.status.label(), theme::accent())
                                         }
                                         (Some(l), _) => (l.status.label(), theme::ERROR),
                                         (None, id) if id > 0 => {
                                             missing_workshop.push(id);
-                                            ("Subscribe on the Steam Workshop", theme::ACCENT)
+                                            ("Subscribe on the Steam Workshop", theme::accent())
                                         }
                                         (None, _) => ("Not found", theme::ERROR),
                                     };
@@ -1865,7 +1865,7 @@ impl ServersPage {
                     Align2::LEFT_TOP,
                     server.display_name(),
                     theme::heading(17.0),
-                    theme::ACCENT,
+                    theme::accent(),
                 );
                 let body = Rect::from_min_max(
                     pos2(rect.left() + 15.0, rect.top() + 74.0),
@@ -1916,8 +1916,11 @@ impl ServersPage {
                                 row.min,
                                 vec2(row.width() * p.clamp(0.0, 1.0), row.height() - 1.0),
                             );
-                            ui.painter()
-                                .rect_filled(fill, 0.0, theme::ACCENT.gamma_multiply(0.5));
+                            ui.painter().rect_filled(
+                                fill,
+                                0.0,
+                                theme::accent().gamma_multiply(0.5),
+                            );
                         }
                         ui.painter().rect_filled(
                             Rect::from_min_max(pos2(row.left(), row.bottom() - 1.0), row.max),

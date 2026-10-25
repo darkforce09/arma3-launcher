@@ -53,9 +53,13 @@ fn layout(
         if let Some(link) = &span.link {
             // Hyperlink: accent and underlined; red without underline on hover.
             let hovered = hovered_link == Some(link.as_str());
-            format.color = if hovered { Color32::RED } else { theme::ACCENT };
+            format.color = if hovered {
+                Color32::RED
+            } else {
+                theme::accent()
+            };
             if !hovered {
-                format.underline = Stroke::new(1.0, theme::ACCENT);
+                format.underline = Stroke::new(1.0, theme::accent());
             }
         } else if span.underline {
             format.underline = Stroke::new(1.0, color);
