@@ -17,6 +17,7 @@ use super::widgets::{
 use super::{icons, theme};
 use crate::config::LauncherConfig;
 use crate::library::Library;
+use crate::mod_files::{self, ModFiles, Signing};
 use crate::mods::{self, Mod, Source, Status};
 use crate::steam::{self, ItemDetails, Steam};
 use crate::vanilla::local_mods::LocalMods;
@@ -108,6 +109,11 @@ pub struct ModsPage {
     sizes: HashMap<PathBuf, Option<u64>>,
     sizes_tx: Sender<(PathBuf, u64)>,
     sizes_rx: Receiver<(PathBuf, u64)>,
+    /// Signing and game extensions per mod folder, read off the UI thread for the rows on screen.
+    /// Keyed by the mod's last update too, so a Workshop update reads them again.
+    files: HashMap<FilesKey, Option<ModFiles>>,
+    files_tx: Sender<(FilesKey, ModFiles)>,
+    files_rx: Receiver<(FilesKey, ModFiles)>,
     dialogs_tx: Sender<DialogResult>,
     dialogs_rx: Receiver<DialogResult>,
 }
@@ -115,6 +121,7 @@ pub struct ModsPage {
 impl ModsPage {
     pub fn new() -> Self {
         let (sizes_tx, sizes_rx) = channel();
+        let (files_tx, files_rx) = channel();
         let (dialogs_tx, dialogs_rx) = channel();
         Self {
             filter: String::new(),
@@ -130,6 +137,9 @@ impl ModsPage {
             sizes: HashMap::new(),
             sizes_tx,
             sizes_rx,
+            files: HashMap::new(),
+            files_tx,
+            files_rx,
             dialogs_tx,
             dialogs_rx,
         }
@@ -153,6 +163,9 @@ impl ModsPage {
         }
         while let Ok((path, size)) = self.sizes_rx.try_recv() {
             self.sizes.insert(path, Some(size));
+        }
+        while let Ok((key, files)) = self.files_rx.try_recv() {
+            self.files.insert(key, Some(files));
         }
 
         let (_, content) = tab_control(ui, "mods-tabs", page, &["Mods"], 0);
@@ -698,18 +711,47 @@ impl ModsPage {
                 x += w + 10.0;
             }
         }
-        if !m.dependencies.is_empty() {
-            let link = Rect::from_center_size(
-                pos2(header.right() - 40.0 - 5.0 - 8.0, y),
-                vec2(16.0, 13.0),
-            );
-            gfx.paint_icon(
-                ui,
+        // Right-docked 16 × 16 icons left of the chevron, right to left: link, signed, 64-bit
+        // extensions. Hidden ones take no space.
+        let files = self.request_files(ui.ctx(), m).cloned();
+        let signed = files.as_ref().is_some_and(|f| f.signing == Signing::Full);
+        let all64 = files.as_ref().is_some_and(|f| f.extensions.all64);
+        let icons = [
+            (
+                !m.dependencies.is_empty(),
                 icons::LINK,
-                link,
-                vec2(16.0, 13.0),
+                vec2(16.0, 12.9),
                 theme::WHITE.gamma_multiply(grip_alpha),
-            );
+                None,
+            ),
+            (
+                signed,
+                icons::SIGNATURE,
+                vec2(9.0, 16.0),
+                theme::SECONDARY_GREEN,
+                Some("This mod is fully signed."),
+            ),
+            (
+                all64,
+                icons::PUZZLE_PIECE,
+                vec2(14.0, 16.0),
+                theme::SECONDARY_GREEN,
+                Some("This mod contains 64-bit extensions."),
+            ),
+        ];
+        let mut slot_right = header.right() - 40.0 - 5.0;
+        for (show, path, size, tint, tooltip) in icons {
+            if !show {
+                continue;
+            }
+            let slot =
+                Rect::from_min_max(pos2(slot_right - 16.0, y - 8.0), pos2(slot_right, y + 8.0));
+            gfx.paint_icon(ui, path, slot, size, tint);
+            if let Some(text) = tooltip {
+                ui.interact(slot, Id::unique(("mod-icon", &m.id, path)), Sense::hover())
+                    .on_hover_text(text);
+            }
+            slot_right -= 16.0 + 3.0;
         }
         let arrow_color = if response.hovered() {
             theme::WHITE
@@ -775,6 +817,12 @@ impl ModsPage {
             Some(Some(bytes)) => format!("{:.0} MB", *bytes as f64 / 1_048_576.0),
             _ => "…".to_owned(),
         };
+        let files = self
+            .files
+            .get(&(m.path.clone(), m.last_update))
+            .cloned()
+            .flatten();
+        let files = files.as_ref();
         let last_update = m
             .last_update
             .and_then(|t| chrono::DateTime::from_timestamp(t, 0))
@@ -798,6 +846,14 @@ impl ModsPage {
             ("Last update:", last_update),
             ("File size:", size),
             ("Status:", status.label().to_owned()),
+            (
+                "Multiplayer:",
+                files.map_or("…", |f| f.signing.label()).to_owned(),
+            ),
+            (
+                "Extensions:",
+                files.map_or("…", |f| f.extensions.label()).to_owned(),
+            ),
         ];
         let mut y = rect.top() + 10.0;
         let key_right = rect.left() + 150.0;
@@ -819,8 +875,39 @@ impl ModsPage {
             job.wrap.max_rows = 1;
             job.wrap.break_anywhere = true;
             let galley = ui.painter().layout_job(job);
-            ui.painter()
-                .galley(pos2(key_right + 10.0, y), galley, theme::WHITE);
+            let value_rect = Rect::from_min_size(pos2(key_right + 10.0, y), galley.size());
+            ui.painter().galley(value_rect.min, galley, theme::WHITE);
+            if let Some(files) = files {
+                let tooltip = match key {
+                    "Multiplayer:" => Some(files.signing.tooltip()),
+                    "Extensions:" => Some(files.extensions.tooltip()),
+                    _ => None,
+                };
+                let mut hover = value_rect;
+                if key == "Multiplayer:" && files.signing == Signing::Full {
+                    // A 16 × 16 signature icon after the text.
+                    let icon = Rect::from_min_size(
+                        pos2(value_rect.right() + 5.0, value_rect.center().y - 9.0),
+                        vec2(16.0, 16.0),
+                    );
+                    gfx.paint_icon(
+                        ui,
+                        icons::SIGNATURE,
+                        icon,
+                        vec2(16.0, 16.0),
+                        theme::SECONDARY_GREEN,
+                    );
+                    hover = hover.union(icon);
+                }
+                if let Some(text) = tooltip {
+                    ui.interact(
+                        hover,
+                        Id::unique(("mod-detail", &m.id, key)),
+                        Sense::hover(),
+                    )
+                    .on_hover_text(text);
+                }
+            }
             y += 24.0;
         }
 
@@ -1020,6 +1107,21 @@ impl ModsPage {
         std::thread::spawn(move || {
             let _ = tx.send((path.clone(), dir_size(&path)));
         });
+    }
+
+    /// The mod's signing and extensions, read in the background on first request.
+    fn request_files(&mut self, ctx: &egui::Context, m: &Mod) -> Option<&ModFiles> {
+        let key = (m.path.clone(), m.last_update);
+        if !self.files.contains_key(&key) {
+            self.files.insert(key.clone(), None);
+            let (tx, ctx) = (self.files_tx.clone(), ctx.clone());
+            std::thread::spawn(move || {
+                let files = mod_files::inspect(&key.0);
+                let _ = tx.send((key, files));
+                ctx.request_repaint();
+            });
+        }
+        self.files.get(&(m.path.clone(), m.last_update))?.as_ref()
     }
 
     fn pick_folder(&self, wrap: fn(PathBuf) -> DialogResult) {
@@ -1864,6 +1966,9 @@ enum RowAction {
 }
 
 /// A preset row icon: glyph, size, and the action it starts.
+/// A mod folder and its last update.
+type FilesKey = (PathBuf, Option<i64>);
+
 type PresetIcon = (&'static str, egui::Vec2, fn(String) -> PresetAction);
 
 enum PresetAction {

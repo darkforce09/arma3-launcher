@@ -6,6 +6,7 @@ mod config;
 mod dlc;
 mod fs_case;
 mod library;
+mod mod_files;
 mod mods;
 mod news;
 mod params;
