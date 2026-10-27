@@ -1,6 +1,6 @@
 //! The loaded mods and presets: what the Mods page edits and what PLAY sends to the game.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io;
 use std::path::PathBuf;
 
@@ -41,12 +41,20 @@ pub struct Library {
     pub active_preset: Option<String>,
     /// The workshop item Steam is downloading: name, bytes done, bytes total.
     pub download: Option<(String, u64, u64)>,
+    /// Workshop items that aren't mods per Steam (scenarios, compositions, items gone from the
+    /// workshop): never listed.
+    pub non_mods: HashSet<u64>,
     presets_dir: PathBuf,
 }
 
 impl Library {
     /// The library with the loaded state of the last session (`arma3.defaultpreset2`).
-    pub fn new(mods: Vec<Mod>, presets_dir: PathBuf, active_preset: Option<String>) -> Self {
+    pub fn new(
+        mods: Vec<Mod>,
+        non_mods: HashSet<u64>,
+        presets_dir: PathBuf,
+        active_preset: Option<String>,
+    ) -> Self {
         let default = Preset::load(&presets_dir.join(DEFAULT_PRESET_FILE)).unwrap_or_default();
         let presets = preset::named_presets(&presets_dir);
         let active_preset = active_preset.filter(|name| presets.iter().any(|(n, _)| n == name));
@@ -57,6 +65,7 @@ impl Library {
             presets,
             active_preset,
             download: None,
+            non_mods,
             presets_dir,
         };
         library.loaded = library.known(&default.mods);
@@ -366,15 +375,26 @@ impl Library {
             .collect()
     }
 
+    /// Whether workshop item `id` is known not to be a mod.
+    pub fn is_non_mod(&self, id: u64) -> bool {
+        self.non_mods.contains(&id)
+    }
+
     /// Merges what Steam reports about subscribed items: install folders, downloads, and items
-    /// subscribed but not yet on disk.
+    /// subscribed but not yet on disk. Items that aren't mods are left out.
     pub fn merge_steam_items(
         &mut self,
         items: &[ItemSnapshot],
         details: &HashMap<u64, ItemDetails>,
     ) -> Merged {
         let mut merged = Merged::default();
-        for item in items {
+        let items: Vec<&ItemSnapshot> = items
+            .iter()
+            .filter(|item| {
+                !self.is_non_mod(item.id) && details.get(&item.id).is_none_or(|d| d.is_mod)
+            })
+            .collect();
+        for item in &items {
             let steam_status = if item.downloading {
                 Status::Busy
             } else if item.download_pending || !item.installed {
@@ -465,9 +485,15 @@ impl Library {
         }
     }
 
-    /// Applies workshop details (titles, dependencies, update times).
+    /// Applies workshop details (titles, dependencies, update times). Items not tagged as mods
+    /// leave the library, as in the vanilla launcher.
     pub fn merge_details(&mut self, details: &[ItemDetails]) {
         for d in details {
+            if !d.is_mod {
+                self.exclude(&[d.id]);
+                continue;
+            }
+            self.non_mods.remove(&d.id);
             if let Some(m) = self.mods.iter_mut().find(|m| m.workshop_id() == Some(d.id)) {
                 if !d.title.is_empty() {
                     m.name = d.title.clone();
@@ -479,6 +505,36 @@ impl Library {
             }
         }
         self.mods.sort_by_key(|m| m.name.to_lowercase());
+    }
+
+    /// Keeps workshop items that aren't mods out of the library: not tagged "Mod", or gone from
+    /// the workshop.
+    pub fn exclude(&mut self, ids: &[u64]) {
+        for &id in ids {
+            self.non_mods.insert(id);
+            self.remove(&mods::steam_id(id));
+        }
+    }
+
+    /// Drops workshop folders that aren't among Steam's subscribed items: leftovers of items
+    /// unsubscribed while Steam kept the folder. The vanilla launcher lists only subscriptions.
+    /// An empty list (Steam not ready) drops nothing.
+    pub fn retain_subscribed(&mut self, items: &[ItemSnapshot]) {
+        if items.is_empty() {
+            return;
+        }
+        let leftovers: Vec<String> = self
+            .mods
+            .iter()
+            .filter(|m| {
+                m.workshop_id()
+                    .is_some_and(|id| !items.iter().any(|i| i.id == id))
+            })
+            .map(|m| m.id.clone())
+            .collect();
+        for id in leftovers {
+            self.remove(&id);
+        }
     }
 
     /// Removes an unsubscribed workshop item.
@@ -515,6 +571,7 @@ mod tests {
             presets: vec![],
             active_preset: None,
             download: None,
+            non_mods: HashSet::new(),
             presets_dir: PathBuf::new(),
         }
     }
@@ -664,6 +721,71 @@ mod tests {
             ]
         );
         assert_eq!(unknown, [7]);
+    }
+
+    #[test]
+    fn items_that_are_not_mods_leave_the_library_and_stay_out() {
+        let snapshot = |id: u64| ItemSnapshot {
+            id,
+            folder: None,
+            installed: false,
+            needs_update: false,
+            downloading: false,
+            download_pending: true,
+            progress: None,
+        };
+        let mut lib = library(&[("steam:1", &[]), ("steam:2", &[])]);
+        lib.loaded = vec!["steam:1".into(), "steam:2".into()];
+        // Steam's tags: 2 is a scenario.
+        let (_, scenario) = details(2, "Scenario", &[], false);
+        lib.merge_details(&[scenario]);
+        assert!(lib.find("steam:2").is_none());
+        assert_eq!(lib.loaded, ["steam:1"]);
+        assert!(lib.is_non_mod(2));
+        // Known non-mods and items whose details say so aren't merged back from Steam.
+        let steam: HashMap<u64, ItemDetails> = [details(3, "Composition", &[], false)].into();
+        let merged = lib.merge_steam_items(&[snapshot(2), snapshot(3), snapshot(4)], &steam);
+        assert_eq!(merged.added, [4]);
+        assert!(lib.find("steam:2").is_none() && lib.find("steam:3").is_none());
+        // Retagged as a mod: no longer excluded.
+        let (_, retagged) = details(2, "Now a mod", &[], true);
+        lib.merge_details(&[retagged]);
+        assert!(!lib.is_non_mod(2));
+        assert_eq!(
+            lib.merge_steam_items(&[snapshot(2)], &HashMap::new()).added,
+            [2]
+        );
+        // Gone from the workshop: excluded like a non-mod.
+        lib.exclude(&[2]);
+        assert!(lib.find("steam:2").is_none() && lib.is_non_mod(2));
+    }
+
+    #[test]
+    fn workshop_folders_without_a_subscription_leave_the_library() {
+        let subscribed = ItemSnapshot {
+            id: 1,
+            folder: None,
+            installed: true,
+            needs_update: false,
+            downloading: false,
+            download_pending: false,
+            progress: None,
+        };
+        let mut lib = library(&[("steam:1", &[]), ("steam:2", &[])]);
+        for m in &mut lib.mods {
+            m.source = Source::Workshop(mods::workshop_number(&m.id).unwrap());
+        }
+        let local = mods::local_mod("Z:\\mods\\@local", PathBuf::from("/mods/@local"), false);
+        let local_id = local.id.clone();
+        lib.mods.push(local);
+        lib.loaded = vec!["steam:2".into()];
+        // Steam not ready yet: nothing is dropped.
+        lib.retain_subscribed(&[]);
+        assert_eq!(lib.mods.len(), 3);
+        lib.retain_subscribed(&[subscribed]);
+        let ids: Vec<&str> = lib.mods.iter().map(|m| m.id.as_str()).collect();
+        assert_eq!(ids, ["steam:1", local_id.as_str()]);
+        assert!(lib.loaded.is_empty());
     }
 
     #[test]

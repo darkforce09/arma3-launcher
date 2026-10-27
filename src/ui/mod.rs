@@ -20,7 +20,7 @@ mod servers;
 pub(crate) mod theme;
 mod widgets;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::ffi::OsString;
 use std::sync::Arc;
 use std::sync::mpsc::{Receiver, channel};
@@ -218,6 +218,7 @@ impl<'a> LauncherApp<'a> {
             &local_mods,
             active_preset,
             state.workshop_timestamps.clone(),
+            state.workshop_non_mods.iter().copied().collect(),
             cc.egui_ctx.clone(),
         );
         let mut news_page = news::NewsPage::new(
@@ -294,6 +295,7 @@ impl<'a> LauncherApp<'a> {
             self.state.workshop_timestamps = timestamps;
             if let Some(steam) = self.steam {
                 let items = steam.subscribed_items();
+                library.retain_subscribed(&items);
                 library.merge_steam_items(&items, &self.workshop);
                 steam.query_details(&items.iter().map(|i| i.id).collect::<Vec<_>>());
             }
@@ -327,6 +329,7 @@ impl<'a> LauncherApp<'a> {
                     }
                     self.author_names.insert(owner, name);
                 }
+                SteamEvent::Unavailable(ids) => library.exclude(&ids),
                 SteamEvent::Unsubscribed(id) => library.remove(&crate::mods::steam_id(id)),
                 // Subscribed here or in Steam: listed and polled until Steam has installed it.
                 SteamEvent::Subscribed(id) | SteamEvent::Installed(id) => {
@@ -387,11 +390,13 @@ impl<'a> LauncherApp<'a> {
                 self.page = Page::Mods;
             }
         }
-        // Items subscribed this session count as busy until they're installed.
+        // Items subscribed this session count as busy until they're installed; those that aren't
+        // mods never join the library.
         self.awaiting_items.retain(|id| {
-            library
-                .find(&crate::mods::steam_id(*id))
-                .is_none_or(|m| !m.launchable())
+            !library.is_non_mod(*id)
+                && library
+                    .find(&crate::mods::steam_id(*id))
+                    .is_none_or(|m| !m.launchable())
         });
         let busy = !self.awaiting_items.is_empty()
             || library
@@ -429,6 +434,9 @@ impl<'a> LauncherApp<'a> {
                     &library.last_active_preset_setting(),
                 );
             }
+            let mut non_mods: Vec<u64> = library.non_mods.iter().copied().collect();
+            non_mods.sort_unstable();
+            self.state.workshop_non_mods = non_mods;
         }
         if let Err(e) = self.settings.save() {
             eprintln!("arma3-launcher: saving user.config failed: {e}");
@@ -1237,6 +1245,7 @@ fn spawn_scan(
     local: &LocalMods,
     active_preset: Option<String>,
     seen: HashMap<u64, u64>,
+    non_mods: HashSet<u64>,
     ctx: egui::Context,
 ) -> Receiver<(Library, HashMap<u64, u64>)> {
     let (tx, rx) = channel();
@@ -1263,6 +1272,7 @@ fn spawn_scan(
             drives: &drives,
             local: &local,
             workshop_cache: &workshop_cache,
+            non_mods: &non_mods,
             seen_timestamps: &seen,
         });
         let mut now = seen;
@@ -1275,7 +1285,7 @@ fn spawn_scan(
                 now.insert(id, ts);
             }
         }
-        let library = Library::new(mods, launcher_data.join("Presets"), active_preset);
+        let library = Library::new(mods, non_mods, launcher_data.join("Presets"), active_preset);
         let _ = tx.send((library, now));
         ctx.request_repaint();
     });

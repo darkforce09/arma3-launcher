@@ -112,11 +112,15 @@ pub struct ScanInput<'a> {
     pub drives: &'a DriveMap,
     pub local: &'a LocalMods,
     pub workshop_cache: &'a HashMap<u64, WorkshopInfo>,
+    /// Workshop items Steam reported as not mods.
+    pub non_mods: &'a HashSet<u64>,
     /// Publish timestamps (`meta.cpp`) seen at the previous start, for the "updated" tag.
     pub seen_timestamps: &'a HashMap<u64, u64>,
 }
 
-/// Scans installed workshop items and local mods, sorted by name.
+/// Scans installed workshop items and local mods, sorted by name. Workshop items that aren't
+/// mods are left out: those Steam reported, and, until Steam has said, those laid out like a
+/// scenario or composition that vanilla's cache doesn't list as a mod.
 pub fn scan(input: &ScanInput) -> Vec<Mod> {
     let mut mods = Vec::new();
     let workshop_root = input.steamapps.join("workshop/content").join(ARMA3_APP_ID);
@@ -132,7 +136,13 @@ pub fn scan(input: &ScanInput) -> Vec<Mod> {
         else {
             continue;
         };
-        mods.push(workshop_mod(id, entry.path(), input));
+        let path = entry.path();
+        if input.non_mods.contains(&id)
+            || (!input.workshop_cache.contains_key(&id) && looks_like_non_mod(&path))
+        {
+            continue;
+        }
+        mods.push(workshop_mod(id, path, input));
     }
 
     let mut seen_paths = HashSet::new();
@@ -251,6 +261,26 @@ pub fn is_intact(path: &Path) -> bool {
         .any(|e| {
             let name = e.file_name().to_string_lossy().to_ascii_lowercase();
             name.ends_with(".pbo") || name.ends_with(".ebo")
+        })
+}
+
+/// A workshop folder without `addons` that holds a scenario or composition: `composition.sqe`,
+/// `mission.sqm`, a PBO or a `*_legacy.bin`. Empty folders don't count; they may be downloading.
+fn looks_like_non_mod(path: &Path) -> bool {
+    if crate::fs_case::resolve(path, "addons").is_some() {
+        return false;
+    }
+    std::fs::read_dir(path)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter(|e| e.file_type().is_ok_and(|t| t.is_file()))
+        .any(|e| {
+            let name = e.file_name().to_string_lossy().to_ascii_lowercase();
+            name == "composition.sqe"
+                || name == "mission.sqm"
+                || name.ends_with(".pbo")
+                || name.ends_with("_legacy.bin")
         })
 }
 
@@ -456,6 +486,50 @@ mod tests {
         assert!(!is_intact(&dir));
         std::fs::write(dir.join("Addons/x.pbo"), b"").unwrap();
         assert!(is_intact(&dir));
+    }
+
+    #[test]
+    fn scan_leaves_out_workshop_items_that_are_not_mods() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("target/test-tmp/scan-non-mods");
+        let _ = std::fs::remove_dir_all(&root);
+        let workshop = root.join("workshop/content").join(ARMA3_APP_ID);
+        let file = |rel: &str| {
+            let path = workshop.join(rel);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, b"").unwrap();
+        };
+        file("1/Addons/x.pbo"); // A mod.
+        file("2/composition.sqe"); // A composition.
+        file("3/123_legacy.bin"); // A scenario.
+        std::fs::create_dir_all(workshop.join("4")).unwrap(); // Still downloading.
+        file("5/456_legacy.bin"); // Vanilla's cache knows it as a mod.
+        file("6/addons/y.pbo"); // Steam said it isn't a mod.
+        let cache = HashMap::from([(5, WorkshopInfo::default())]);
+        let ids = |non_mods: &HashSet<u64>| {
+            let mut ids: Vec<String> = scan(&ScanInput {
+                steamapps: &root,
+                game_dir: &root.join("game"),
+                drives: &DriveMap {
+                    dosdevices: PathBuf::new(),
+                    steam_root: PathBuf::new(),
+                },
+                local: &LocalMods::default(),
+                workshop_cache: &cache,
+                non_mods,
+                seen_timestamps: &HashMap::new(),
+            })
+            .into_iter()
+            .map(|m| m.id)
+            .collect();
+            ids.sort();
+            ids
+        };
+        assert_eq!(
+            ids(&HashSet::new()),
+            ["steam:1", "steam:4", "steam:5", "steam:6"]
+        );
+        assert_eq!(ids(&HashSet::from([6, 4])), ["steam:1", "steam:5"]);
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
