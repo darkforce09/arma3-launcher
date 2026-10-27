@@ -12,6 +12,9 @@ pub struct State {
     /// `meta.cpp` publish timestamps of workshop items at the last start (the "updated" tag).
     #[serde(default)]
     pub workshop_timestamps: HashMap<u64, u64>,
+    /// Workshop items Steam reported as not mods (scenarios, compositions), kept out of the list.
+    #[serde(default)]
+    pub workshop_non_mods: Vec<u64>,
     /// The newest news post id at the last exit; newer posts are unread.
     #[serde(default)]
     pub news_seen_newest: Option<u64>,

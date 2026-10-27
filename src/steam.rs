@@ -64,6 +64,8 @@ pub struct ItemDetails {
 
 pub enum SteamEvent {
     Details(Vec<ItemDetails>),
+    /// Items a details query got no details for: removed, hidden or banned on the workshop.
+    Unavailable(Vec<u64>),
     Unsubscribed(u64),
     /// The user subscribed to a workshop item, possibly in Steam itself.
     Subscribed(u64),
@@ -233,7 +235,8 @@ impl Steam {
             .collect()
     }
 
-    /// Queries workshop details; results arrive as [`SteamEvent::Details`].
+    /// Queries workshop details; results arrive as [`SteamEvent::Details`], and the items Steam
+    /// has no details for as [`SteamEvent::Unavailable`].
     pub fn query_details(&self, ids: &[u64]) {
         for batch in ids.chunks(DETAILS_BATCH) {
             let items: Vec<PublishedFileId> = batch.iter().map(|&id| PublishedFileId(id)).collect();
@@ -242,6 +245,7 @@ impl Steam {
             };
             let (tx, repaint) = (self.events_tx.clone(), self.repaint.clone());
             let client = self.client.clone();
+            let requested = batch.to_vec();
             query.include_children(true).fetch(move |result| {
                 let Ok(results) = result else { return };
                 let details: Vec<ItemDetails> = (0..results.returned_results())
@@ -275,6 +279,15 @@ impl Steam {
                         let name = friends.get_friend(id).name();
                         let _ = tx.send(SteamEvent::Author { owner, name });
                     }
+                }
+                // Steam answers for every requested id; those without details (a result other
+                // than OK) no longer exist for this user.
+                let unavailable: Vec<u64> = requested
+                    .into_iter()
+                    .filter(|id| !details.iter().any(|d| d.id == *id))
+                    .collect();
+                if !unavailable.is_empty() {
+                    let _ = tx.send(SteamEvent::Unavailable(unavailable));
                 }
                 let _ = tx.send(SteamEvent::Details(details));
                 if let Some(ctx) = repaint.lock().unwrap().as_ref() {
