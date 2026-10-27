@@ -72,6 +72,13 @@ mod tests {
         let bad = dir.join("Arma3_x64_2026-10-24.rpt");
         std::fs::write(&clean, "Starting game.\n").unwrap();
         std::fs::write(&bad, "12:00:00 Error in expression <_x>\n").unwrap();
+        // Both writes can land on the same timestamp, so make the clean report clearly older.
+        File::options()
+            .write(true)
+            .open(&clean)
+            .unwrap()
+            .set_modified(SystemTime::now() - std::time::Duration::from_secs(60))
+            .unwrap();
         assert!(!has_error(&clean));
         assert!(has_error(&bad));
         assert_eq!(newest(&dir), Some(bad));
