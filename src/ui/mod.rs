@@ -1105,6 +1105,8 @@ impl eframe::App for LauncherApp<'_> {
             .flat_map(|l| l.presets.iter().map(|(n, _)| n.clone()))
             .collect();
         let mut chosen: Option<Vec<String>> = None;
+        // The preset list scrolls in the room above PLAY, below the two header rows and separator.
+        let presets_height = (play.menu.rect.top() - win.top() - 77.0 - 8.0).max(120.0);
         egui::Popup::menu(&play.menu)
             .frame(menu::frame())
             .width(200.0)
@@ -1115,11 +1117,17 @@ impl eframe::App for LauncherApp<'_> {
                 }
                 menu::separator(ui);
                 menu::item(ui, "Play with a preset:", false);
-                for name in &presets {
-                    if menu::item(ui, &format!("      {name}"), true) {
-                        chosen = Some(self.preset_mods(name));
-                    }
-                }
+                egui::ScrollArea::vertical()
+                    .id_salt("play-presets")
+                    .max_height(presets_height)
+                    .show(ui, |ui| {
+                        ui.spacing_mut().item_spacing = egui::vec2(0.0, 0.0);
+                        for name in &presets {
+                            if menu::item(ui, &format!("      {name}"), true) {
+                                chosen = Some(self.preset_mods(name));
+                            }
+                        }
+                    });
             });
         if let Some(mods) = chosen {
             self.play(&ctx, Some(mods), Vec::new());
