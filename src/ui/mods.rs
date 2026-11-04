@@ -16,7 +16,7 @@ use super::widgets::{
 };
 use super::{icons, theme};
 use crate::config::LauncherConfig;
-use crate::library::Library;
+use crate::library::{Library, PresetUsage, PresetUse};
 use crate::mod_files::{self, ModFiles, Signing};
 use crate::mods::{self, Mod, Source, Status};
 use crate::steam::{self, ItemDetails, Steam};
@@ -52,6 +52,35 @@ enum DialogResult {
     ExportPreset(PathBuf, String),
 }
 
+/// A preset's name in the details line and its tooltip.
+fn usage_entry(usage: &PresetUse) -> String {
+    if usage.via_dependency {
+        format!("{} (dependency)", usage.name)
+    } else {
+        usage.name.clone()
+    }
+}
+
+/// The value of the details line: up to 3 presets, then how many more.
+fn usage_label(uses: &[PresetUse]) -> String {
+    const SHOWN: usize = 3;
+    if uses.is_empty() {
+        return "None".to_owned();
+    }
+    let names: Vec<String> = uses.iter().take(SHOWN).map(usage_entry).collect();
+    let names = names.join(", ");
+    match uses.len().saturating_sub(SHOWN) {
+        0 => names,
+        more => format!("{names} +{more} more"),
+    }
+}
+
+/// Every preset using a mod, one per line.
+fn usage_tooltip(uses: &[PresetUse]) -> String {
+    let names: Vec<String> = uses.iter().map(usage_entry).collect();
+    names.join("\n")
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Section {
     Loaded,
@@ -61,7 +90,12 @@ enum Section {
 enum Line {
     Header(Section),
     Hint,
-    Row { index: usize, section: Section },
+    Row {
+        index: usize,
+        section: Section,
+        /// Position in `lib.loaded`, which a filter can leave hidden rows in; 0 when available.
+        load_order: usize,
+    },
 }
 
 struct CollectionDialog {
@@ -96,6 +130,8 @@ pub fn collection_preset_name(title: &str) -> String {
 
 pub struct ModsPage {
     filter: String,
+    /// Show only mods that no saved preset uses.
+    unused_only: bool,
     expanded: HashSet<String>,
     dragging: Option<String>,
     preset_open: bool,
@@ -125,6 +161,7 @@ impl ModsPage {
         let (dialogs_tx, dialogs_rx) = channel();
         Self {
             filter: String::new(),
+            unused_only: false,
             expanded: HashSet::new(),
             dragging: None,
             preset_open: false,
@@ -145,8 +182,18 @@ impl ModsPage {
         }
     }
 
-    fn matches(&self, m: &Mod) -> bool {
-        self.filter.is_empty() || m.name.to_lowercase().contains(&self.filter.to_lowercase())
+    fn matches(&self, m: &Mod, usage: &PresetUsage) -> bool {
+        (self.filter.is_empty() || m.name.to_lowercase().contains(&self.filter.to_lowercase()))
+            && !(self.unused_only && usage.is_used(&m.id))
+    }
+
+    /// The preset usage, worked out only when the filter or an expanded row needs it.
+    fn usage(&self, lib: &Library) -> PresetUsage {
+        if self.unused_only || !self.expanded.is_empty() {
+            lib.preset_usage()
+        } else {
+            PresetUsage::default()
+        }
     }
 
     pub fn show(
@@ -351,9 +398,16 @@ impl ModsPage {
                 }
             });
 
-        let width = (bar.right() - x - 6.0).clamp(250.0, 400.0).min(300.0);
+        let toggle_width = 70.0;
+        let width = (bar.right() - x - 6.0 - toggle_width)
+            .clamp(250.0, 400.0)
+            .min(300.0);
+        let toggle_rect = Rect::from_min_size(
+            pos2(bar.right() - 3.0 - toggle_width, bar.top() + 4.0),
+            vec2(toggle_width, 32.0),
+        );
         let filter_rect = Rect::from_min_size(
-            pos2(bar.right() - 3.0 - width, bar.top() + 4.0),
+            pos2(toggle_rect.left() - width, bar.top() + 4.0),
             vec2(width, 32.0),
         );
         filter_box(
@@ -367,31 +421,64 @@ impl ModsPage {
         if ui.input(|i| i.modifiers.command && i.key_pressed(egui::Key::F)) {
             ui.memory_mut(|m| m.request_focus(Id::unique("mods-filter")));
         }
+
+        // The look of the Servers page's Filters toggle.
+        let unused = ui
+            .interact(toggle_rect, Id::unique("mods-unused"), Sense::click())
+            .on_hover_text("Show only mods that no saved preset uses");
+        if unused.clicked() {
+            self.unused_only = !self.unused_only;
+        }
+        ui.painter()
+            .rect_filled(toggle_rect, 0.0, theme::argb(0xCC000000));
+        ui.painter().rect_stroke(
+            toggle_rect,
+            0.0,
+            (
+                1.0,
+                if self.unused_only {
+                    theme::accent()
+                } else {
+                    theme::argb(0xFF333333)
+                },
+            ),
+            egui::StrokeKind::Inside,
+        );
+        ui.painter().text(
+            toggle_rect.center(),
+            Align2::CENTER_CENTER,
+            "Unused",
+            theme::body(theme::BODY_SIZE),
+            theme::WHITE,
+        );
     }
 
-    fn lines(&self, lib: &Library) -> Vec<Line> {
+    fn lines(&self, lib: &Library, usage: &PresetUsage) -> Vec<Line> {
         let mut lines = vec![Line::Header(Section::Loaded)];
         let mut any_loaded = false;
-        for id in &lib.loaded {
+        for (load_order, id) in lib.loaded.iter().enumerate() {
             if let Some(index) = lib.mods.iter().position(|m| &m.id == id)
-                && self.matches(&lib.mods[index])
+                && self.matches(&lib.mods[index], usage)
             {
                 lines.push(Line::Row {
                     index,
                     section: Section::Loaded,
+                    load_order,
                 });
                 any_loaded = true;
             }
         }
-        if !any_loaded {
+        // Mods hidden by the Unused filter are still loaded: the hint would say otherwise.
+        if !any_loaded && (lib.loaded.is_empty() || !self.unused_only) {
             lines.push(Line::Hint);
         }
         lines.push(Line::Header(Section::Available));
         for (index, m) in lib.mods.iter().enumerate() {
-            if !lib.is_loaded(&m.id) && self.matches(m) {
+            if !lib.is_loaded(&m.id) && self.matches(m, usage) {
                 lines.push(Line::Row {
                     index,
                     section: Section::Available,
+                    load_order: 0,
                 });
             }
         }
@@ -422,7 +509,8 @@ impl ModsPage {
         lib: &mut Library,
         env: &mut ModsEnv,
     ) {
-        let lines = self.lines(lib);
+        let usage = self.usage(lib);
+        let lines = self.lines(lib, &usage);
         let heights: Vec<f32> = lines.iter().map(|l| self.line_height(l, lib)).collect();
         let total: f32 = heights.iter().sum();
         let loaded_count = lib.loaded.len();
@@ -439,7 +527,7 @@ impl ModsPage {
                 let origin = ui.min_rect().min;
                 let width = body.width();
                 let mut y = 0.0;
-                let mut loaded_row = 0usize;
+                let mut loaded_end = 0usize;
                 let mut available_top = f32::MAX;
                 for (line, height) in lines.iter().zip(&heights) {
                     let rect = Rect::from_min_size(origin + vec2(0.0, y), vec2(width, *height));
@@ -450,15 +538,16 @@ impl ModsPage {
                     if let (Some(p), Some(_)) = (pointer, &self.dragging) {
                         if let Line::Row {
                             section: Section::Loaded,
+                            load_order,
                             ..
                         } = line
                             && p.y >= rect.top()
                             && p.y < rect.bottom()
                         {
                             let index = if p.y < rect.center().y {
-                                loaded_row
+                                *load_order
                             } else {
-                                loaded_row + 1
+                                *load_order + 1
                             };
                             drop_target = Some((Section::Loaded, index));
                         }
@@ -505,7 +594,7 @@ impl ModsPage {
                                     theme::EMPTY_HINT,
                                 );
                             }
-                            Line::Row { index, section } => {
+                            Line::Row { index, section, .. } => {
                                 let row =
                                     Rect::from_min_max(rect.min + vec2(0.0, ROW_GAP), rect.max);
                                 if let Some(action) = self.row(
@@ -516,6 +605,7 @@ impl ModsPage {
                                     *section == Section::Loaded,
                                     lib.dependency_badge(&lib.mods[*index]),
                                     lib.status(&lib.mods[*index]),
+                                    usage.of(&lib.mods[*index].id),
                                     env,
                                 ) {
                                     actions.push(action);
@@ -525,10 +615,11 @@ impl ModsPage {
                     }
                     if let Line::Row {
                         section: Section::Loaded,
+                        load_order,
                         ..
                     } = line
                     {
-                        loaded_row += 1;
+                        loaded_end = *load_order + 1;
                     }
                     y += height;
                 }
@@ -536,7 +627,7 @@ impl ModsPage {
                     if p.y >= available_top {
                         drop_target = Some((Section::Available, 0));
                     } else if drop_target.is_none() && p.y > origin.y {
-                        drop_target = Some((Section::Loaded, loaded_row));
+                        drop_target = Some((Section::Loaded, loaded_end));
                     }
                 }
             });
@@ -602,6 +693,7 @@ impl ModsPage {
         loaded: bool,
         badge: Option<(usize, bool)>,
         status: Status,
+        uses: &[PresetUse],
         env: &mut ModsEnv,
     ) -> Option<RowAction> {
         let mut action = None;
@@ -785,7 +877,7 @@ impl ModsPage {
 
         if expanded {
             let detail = Rect::from_min_max(pos2(rect.left(), header.bottom()), rect.max);
-            if let Some(a) = self.details(ui, gfx, detail, m, badge, status, env) {
+            if let Some(a) = self.details(ui, gfx, detail, m, badge, status, uses, env) {
                 action = Some(a);
             }
         }
@@ -802,6 +894,7 @@ impl ModsPage {
         m: &Mod,
         badge: Option<(usize, bool)>,
         status: Status,
+        uses: &[PresetUse],
         env: &mut ModsEnv,
     ) -> Option<RowAction> {
         let mut action = None;
@@ -854,6 +947,7 @@ impl ModsPage {
                 "Extensions:",
                 files.map_or("…", |f| f.extensions.label()).to_owned(),
             ),
+            ("Presets:", usage_label(uses)),
         ];
         let mut y = rect.top() + 10.0;
         let key_right = rect.left() + 150.0;
@@ -877,6 +971,14 @@ impl ModsPage {
             let galley = ui.painter().layout_job(job);
             let value_rect = Rect::from_min_size(pos2(key_right + 10.0, y), galley.size());
             ui.painter().galley(value_rect.min, galley, theme::WHITE);
+            if key == "Presets:" && !uses.is_empty() {
+                ui.interact(
+                    value_rect,
+                    Id::unique(("mod-detail", &m.id, key)),
+                    Sense::hover(),
+                )
+                .on_hover_text(usage_tooltip(uses));
+            }
             if let Some(files) = files {
                 let tooltip = match key {
                     "Multiplayer:" => Some(files.signing.tooltip()),
@@ -1034,8 +1136,9 @@ impl ModsPage {
     }
 
     fn apply(&mut self, action: RowAction, lib: &mut Library, env: &mut ModsEnv) {
-        let filter = self.filter.to_lowercase();
-        let visible = |m: &Mod| filter.is_empty() || m.name.to_lowercase().contains(&filter);
+        let usage = self.usage(lib);
+        let page = &*self;
+        let visible = |m: &Mod| page.matches(m, &usage);
         match action {
             RowAction::Load(id) => self.request_load(vec![id], None, lib, env),
             RowAction::Unload(id) => {
@@ -2021,4 +2124,133 @@ fn dependency_badge(ui: &egui::Ui, button: Rect, count: usize, satisfied: bool) 
         egui::FontId::new(11.0, egui::FontFamily::Name("roboto-medium".into())),
         Color32::BLACK,
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::vanilla::preset::Preset;
+
+    fn entry(name: &str, via_dependency: bool) -> PresetUse {
+        PresetUse {
+            name: name.into(),
+            via_dependency,
+        }
+    }
+
+    fn library(ids: &[&str], loaded: &[&str], preset: &[&str]) -> Library {
+        let mods = ids
+            .iter()
+            .map(|id| Mod {
+                id: id.to_string(),
+                source: Source::Workshop(0),
+                name: id.to_string(),
+                author: String::new(),
+                path: PathBuf::from(format!("/mods/{id}")),
+                dependencies: vec![],
+                status: Status::Ok,
+                updated: false,
+                auto_included: false,
+                last_update: None,
+            })
+            .collect();
+        let mut lib = Library::new(mods, HashSet::new(), PathBuf::from("no-such-dir"), None);
+        lib.loaded = loaded.iter().map(|id| id.to_string()).collect();
+        lib.presets.push((
+            "A".into(),
+            Preset {
+                last_update: "x".into(),
+                mods: preset.iter().map(|id| id.to_string()).collect(),
+                dlcs: vec![],
+            },
+        ));
+        lib
+    }
+
+    /// The lines as (mod name, load order), with `hint` for the hint.
+    fn rows(page: &ModsPage, lib: &Library) -> Vec<(String, usize)> {
+        page.lines(lib, &page.usage(lib))
+            .iter()
+            .filter_map(|line| match line {
+                Line::Row {
+                    index, load_order, ..
+                } => Some((lib.mods[*index].name.clone(), *load_order)),
+                Line::Hint => Some(("hint".to_owned(), 0)),
+                Line::Header(_) => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn usage_label_shows_three_presets_then_a_count() {
+        assert_eq!(usage_label(&[]), "None");
+        assert_eq!(usage_label(&[entry("A", false)]), "A");
+        assert_eq!(
+            usage_label(&[entry("A", false), entry("B", true)]),
+            "A, B (dependency)"
+        );
+        let many = [
+            entry("A", false),
+            entry("B", true),
+            entry("C", false),
+            entry("D", false),
+            entry("E", true),
+        ];
+        assert_eq!(usage_label(&many), "A, B (dependency), C +2 more");
+        assert_eq!(
+            usage_tooltip(&many),
+            "A\nB (dependency)\nC\nD\nE (dependency)"
+        );
+    }
+
+    #[test]
+    fn unused_filter_hides_mods_in_a_preset_from_both_sections() {
+        let mut page = ModsPage::new();
+        let lib = library(
+            &["steam:1", "steam:2", "steam:3", "steam:4"],
+            &["steam:1", "steam:2"],
+            &["steam:1", "steam:3"],
+        );
+        page.unused_only = true;
+        assert_eq!(
+            rows(&page, &lib),
+            [("steam:2".to_owned(), 1), ("steam:4".to_owned(), 0)]
+        );
+    }
+
+    #[test]
+    fn unused_filter_combines_with_search() {
+        let mut page = ModsPage::new();
+        let lib = library(&["steam:1", "steam:2", "local:3"], &[], &["steam:1"]);
+        page.unused_only = true;
+        page.filter = "STEAM".into();
+        assert_eq!(
+            rows(&page, &lib),
+            [("hint".to_owned(), 0), ("steam:2".to_owned(), 0)]
+        );
+    }
+
+    #[test]
+    fn rows_keep_their_load_order_when_a_filter_hides_some() {
+        let mut page = ModsPage::new();
+        let lib = library(
+            &["steam:1", "steam:2", "steam:3"],
+            &["steam:1", "steam:2", "steam:3"],
+            &[],
+        );
+        page.filter = "3".into();
+        assert_eq!(rows(&page, &lib), [("steam:3".to_owned(), 2)]);
+    }
+
+    #[test]
+    fn the_hint_stays_away_when_the_unused_filter_hides_every_loaded_mod() {
+        let mut page = ModsPage::new();
+        let lib = library(&["steam:1"], &["steam:1"], &["steam:1"]);
+        assert_eq!(rows(&page, &lib), [("steam:1".to_owned(), 0)]);
+        page.unused_only = true;
+        assert!(rows(&page, &lib).is_empty());
+        // Nothing loaded: the hint is true.
+        let lib = library(&["steam:1"], &[], &["steam:1"]);
+        assert_eq!(rows(&page, &lib), [("hint".to_owned(), 0)]);
+    }
 }
