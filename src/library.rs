@@ -29,6 +29,31 @@ pub struct Merged {
     pub installed: Vec<u64>,
 }
 
+/// A saved preset that uses a mod.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PresetUse {
+    pub name: String,
+    /// Not listed by the preset, but a mod in it needs this one, at any depth.
+    pub via_dependency: bool,
+}
+
+/// Which saved presets use each mod, from [`Library::preset_usage`].
+#[derive(Debug, Default)]
+pub struct PresetUsage(HashMap<String, Vec<PresetUse>>);
+
+impl PresetUsage {
+    /// The presets using mod `id`, sorted by preset name.
+    pub fn of(&self, id: &str) -> &[PresetUse] {
+        self.0
+            .get(&id.to_ascii_lowercase())
+            .map_or(&[], Vec::as_slice)
+    }
+
+    pub fn is_used(&self, id: &str) -> bool {
+        !self.of(id).is_empty()
+    }
+}
+
 pub struct Library {
     /// All mods, sorted by name.
     pub mods: Vec<Mod>,
@@ -257,6 +282,47 @@ impl Library {
 
     pub fn preset(&self, name: &str) -> Option<&Preset> {
         self.presets.iter().find(|(n, _)| n == name).map(|(_, p)| p)
+    }
+
+    /// Which saved presets use each installed mod: the mods they list and, through installed
+    /// mods, those mods' dependencies. Not cached, so it can't go stale: call it once per frame at
+    /// most, and only when the result is shown.
+    pub fn preset_usage(&self) -> PresetUsage {
+        let index: HashMap<String, &Mod> = self
+            .mods
+            .iter()
+            .map(|m| (m.id.to_ascii_lowercase(), m))
+            .collect();
+        let mut usage: HashMap<String, Vec<PresetUse>> = HashMap::new();
+        for (name, preset) in &self.presets {
+            let mut record = |id: &str, via_dependency| {
+                usage.entry(id.to_owned()).or_default().push(PresetUse {
+                    name: name.clone(),
+                    via_dependency,
+                });
+            };
+            // Listed mods first, so a mod both listed and needed counts as listed.
+            let mut seen = HashSet::new();
+            let mut stack = Vec::new();
+            for id in &preset.mods {
+                let id = id.to_ascii_lowercase();
+                if index.contains_key(&id) && seen.insert(id.clone()) {
+                    record(&id, false);
+                    stack.push(id);
+                }
+            }
+            while let Some(id) = stack.pop() {
+                let Some(m) = index.get(&id) else { continue };
+                for dependency in &m.dependencies {
+                    let dependency = dependency.to_ascii_lowercase();
+                    if seen.insert(dependency.clone()) {
+                        record(&dependency, true);
+                        stack.push(dependency);
+                    }
+                }
+            }
+        }
+        PresetUsage(usage)
     }
 
     /// The active preset's name with `*` when the loaded mods differ from it, or vanilla's
@@ -614,6 +680,101 @@ mod tests {
         assert_eq!(lib.preset_label(), ("A".into(), false));
         lib.load_exactly(&["steam:1".into()], None);
         assert_eq!(lib.preset_label(), ("A".into(), true));
+    }
+
+    fn with_presets(mut lib: Library, presets: &[(&str, &[&str])]) -> Library {
+        for (name, mods) in presets {
+            lib.presets.push((
+                name.to_string(),
+                Preset {
+                    last_update: "x".into(),
+                    mods: mods.iter().map(|m| m.to_string()).collect(),
+                    dlcs: vec![],
+                },
+            ));
+        }
+        lib
+    }
+
+    fn uses(name: &str, via_dependency: bool) -> PresetUse {
+        PresetUse {
+            name: name.into(),
+            via_dependency,
+        }
+    }
+
+    #[test]
+    fn preset_usage_matches_listed_mods_ignoring_case() {
+        let lib = with_presets(
+            library(&[("steam:1", &[]), ("steam:2", &[])]),
+            &[("A", &["STEAM:2", "steam:2", "steam:9"])],
+        );
+        let usage = lib.preset_usage();
+        assert_eq!(usage.of("steam:2"), [uses("A", false)]);
+        assert_eq!(usage.of("STEAM:2"), [uses("A", false)]);
+        assert!(!usage.is_used("steam:1"));
+        // Listed but not installed: no row to show it on.
+        assert!(!usage.is_used("steam:9"));
+    }
+
+    #[test]
+    fn preset_usage_follows_dependencies_at_any_depth() {
+        let lib = with_presets(
+            library(&[
+                ("steam:1", &["steam:2"]),
+                ("steam:2", &["STEAM:3"]),
+                ("steam:3", &[]),
+                ("steam:4", &[]),
+            ]),
+            &[("A", &["steam:1"])],
+        );
+        let usage = lib.preset_usage();
+        assert_eq!(usage.of("steam:1"), [uses("A", false)]);
+        assert_eq!(usage.of("steam:2"), [uses("A", true)]);
+        assert_eq!(usage.of("steam:3"), [uses("A", true)]);
+        assert!(!usage.is_used("steam:4"));
+    }
+
+    #[test]
+    fn preset_usage_counts_a_listed_dependency_as_listed() {
+        let lib = with_presets(
+            library(&[("steam:1", &["steam:2"]), ("steam:2", &[])]),
+            &[("A", &["steam:1", "steam:2"])],
+        );
+        assert_eq!(lib.preset_usage().of("steam:2"), [uses("A", false)]);
+    }
+
+    #[test]
+    fn preset_usage_survives_a_dependency_cycle() {
+        let lib = with_presets(
+            library(&[("steam:1", &["steam:2"]), ("steam:2", &["steam:1"])]),
+            &[("A", &["steam:1"])],
+        );
+        let usage = lib.preset_usage();
+        assert_eq!(usage.of("steam:1"), [uses("A", false)]);
+        assert_eq!(usage.of("steam:2"), [uses("A", true)]);
+    }
+
+    #[test]
+    fn preset_usage_lists_every_preset_in_order() {
+        let lib = with_presets(
+            library(&[("steam:1", &["steam:2"]), ("steam:2", &[])]),
+            &[
+                ("A", &["steam:2"]),
+                ("B", &["steam:1"]),
+                ("C", &["steam:2"]),
+            ],
+        );
+        assert_eq!(
+            lib.preset_usage().of("steam:2"),
+            [uses("A", false), uses("B", true), uses("C", false)]
+        );
+    }
+
+    #[test]
+    fn nothing_is_used_without_presets() {
+        let lib = library(&[("steam:1", &["steam:2"]), ("steam:2", &[])]);
+        assert!(!lib.preset_usage().is_used("steam:1"));
     }
 
     #[test]
