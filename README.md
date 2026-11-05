@@ -3,6 +3,7 @@
 A native launcher for Arma 3 that looks and works like the vanilla launcher. Rust + egui. On Linux it replaces the vanilla launcher under Proton. On Windows it is a native program next to the Windows game. It starts in about a tenth of a second and uses the desktop's own file dialogs.
 
 ## Install
+### Linux
 Download `arma3-launcher-<version>-linux-x86_64.tar.gz` from [Releases](https://github.com/darkforce09/arma3-launcher/releases) and extract it into the Arma 3 folder:
 ```bash
 tar -xzf arma3-launcher-*-linux-x86_64.tar.gz -C ~/.local/share/Steam/steamapps/common/"Arma 3"
@@ -17,7 +18,8 @@ Press Play in Steam and the launcher opens. Its PLAY button starts the game thro
 
 Steam's "Verify integrity" leaves the folder alone; uninstalling Arma 3 deletes it.
 
-Windows:
+### Windows
+Download `arma3-launcher-<version>-windows-x86_64.zip` from [Releases](https://github.com/darkforce09/arma3-launcher/releases) and extract it anywhere, for example into the Arma 3 folder. That gives `arma3-launcher\arma3-launcher.exe`. In Steam: Arma 3 → Properties → Launch Options:
 ```
 "C:\path\to\arma3-launcher.exe" %command%
 ```

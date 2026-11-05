@@ -8,7 +8,7 @@ permissions:
   contents: write
 
 jobs:
-  release:
+  linux:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -23,16 +23,52 @@ jobs:
           mkdir -p dist/arma3-launcher
           cp target/release/arma3-launcher target/release/libsteam_api.so dist/arma3-launcher/
           tar -C dist -czf "arma3-launcher-${GITHUB_REF_NAME}-linux-x86_64.tar.gz" arma3-launcher
-          sha256sum "arma3-launcher-${GITHUB_REF_NAME}-linux-x86_64.tar.gz" > SHA256SUMS.txt
-      # The annotated tag carries the release: its subject is the title, its body the notes.
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux
+          path: arma3-launcher-*-linux-x86_64.tar.gz
+          if-no-files-found: error
+
+  # MSVC only: build.rs links steam_api64.dll with /DELAYLOAD and delayimp.lib.
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      # The toolchain version comes from rust-toolchain.toml.
+      - run: rustup show active-toolchain || rustup toolchain install
+      - run: cargo build --release --locked
+      # steam_api64.dll is embedded in the exe; it must not ship next to it.
+      - name: Package
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Force dist/arma3-launcher | Out-Null
+          Copy-Item target/release/arma3-launcher.exe dist/arma3-launcher/
+          Compress-Archive -Path dist/arma3-launcher -DestinationPath "arma3-launcher-$env:GITHUB_REF_NAME-windows-x86_64.zip"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: arma3-launcher-*-windows-x86_64.zip
+          if-no-files-found: error
+
+  # The annotated tag carries the release: its subject is the title, its body the notes.
+  publish:
+    needs: [linux, windows]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
       - name: Publish
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
+          sha256sum arma3-launcher-*.tar.gz arma3-launcher-*.zip > SHA256SUMS.txt
           git fetch --force origin "refs/tags/${GITHUB_REF_NAME}:refs/tags/${GITHUB_REF_NAME}"
           subject=$(git tag -l --format='%(contents:subject)' "$GITHUB_REF_NAME")
           git tag -l --format='%(contents:body)' "$GITHUB_REF_NAME" > notes.md
           gh release create "$GITHUB_REF_NAME" \
-            "arma3-launcher-${GITHUB_REF_NAME}-linux-x86_64.tar.gz" SHA256SUMS.txt \
+            arma3-launcher-*.tar.gz arma3-launcher-*.zip SHA256SUMS.txt \
             --title "${GITHUB_REF_NAME} — ${subject}" --notes-file notes.md
